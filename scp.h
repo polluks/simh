@@ -103,10 +103,13 @@ t_stat noop_cmd (int32 flag, CONST char *ptr);
 t_stat assert_cmd (int32 flag, CONST char *ptr);
 t_stat send_cmd (int32 flag, CONST char *ptr);
 t_stat expect_cmd (int32 flag, CONST char *ptr);
+t_stat sleep_cmd (int32 flag, CONST char *ptr);
 t_stat help_cmd (int32 flag, CONST char *ptr);
 t_stat screenshot_cmd (int32 flag, CONST char *ptr);
 t_stat spawn_cmd (int32 flag, CONST char *ptr);
 t_stat echo_cmd (int32 flag, CONST char *ptr);
+t_stat echof_cmd (int32 flag, CONST char *ptr);
+t_stat debug_cmd (int32 flag, CONST char *ptr);
 
 /* Allow compiler to help validate printf style format arguments */
 #if !defined __GNUC__
@@ -149,13 +152,65 @@ const char *sim_uname (UNIT *dptr);
 const char *sim_set_uname (UNIT *uptr, const char *uname);
 t_stat get_yn (const char *ques, t_stat deflt);
 char *sim_trim_endspc (char *cptr);
-int sim_isspace (char c);
-int sim_islower (char c);
-int sim_isalpha (char c);
-int sim_isprint (char c);
-int sim_isdigit (char c);
-int sim_isgraph (char c);
-int sim_isalnum (char c);
+int sim_isspace (int c);
+#ifdef isspace
+#undef isspace
+#endif
+#ifndef IN_SCP_C
+#define isspace(chr) sim_isspace (chr)
+#endif
+int sim_islower (int c);
+#ifdef islower
+#undef islower
+#endif
+#ifndef IN_SCP_C
+#define islower(chr) sim_islower (chr)
+#endif
+int sim_isalpha (int c);
+#ifdef isalpha
+#undef isalpha
+#endif
+#ifndef IN_SCP_C
+#define isalpha(chr) sim_isalpha (chr)
+#endif
+int sim_isprint (int c);
+#ifdef isprint
+#undef isprint
+#endif
+#ifndef IN_SCP_C
+#define isprint(chr) sim_isprint (chr)
+#endif
+int sim_isdigit (int c);
+#ifdef isdigit
+#undef isdigit
+#endif
+#ifndef IN_SCP_C
+#define isdigit(chr) sim_isdigit (chr)
+#endif
+int sim_isgraph (int c);
+#ifdef isgraph
+#undef isgraph
+#endif
+#ifndef IN_SCP_C
+#define isgraph(chr) sim_isgraph (chr)
+#endif
+int sim_isalnum (int c);
+#ifdef isalnum
+#undef isalnum
+#endif
+#ifndef IN_SCP_C
+#define isalnum(chr) sim_isalnum (chr)
+#endif
+int sim_toupper (int c);
+int sim_tolower (int c);
+#ifdef toupper
+#undef toupper
+#endif
+#define toupper(chr) sim_toupper(chr)
+#ifdef tolower
+#undef tolower
+#endif
+#define tolower(chr) sim_tolower(chr)
 int sim_strncasecmp (const char *string1, const char *string2, size_t len);
 int sim_strcasecmp (const char *string1, const char *string2);
 size_t sim_strlcat (char *dst, const char *src, size_t size);
@@ -173,6 +228,7 @@ size_t sim_strlcpy (char *dst, const char *src, size_t size);
 #define strcasecmp(str1, str2) sim_strcasecmp ((str1), (str2))
 #endif
 CONST char *get_sim_opt (int32 opt, CONST char *cptr, t_stat *st);
+CONST char *get_sim_sw (CONST char *cptr);
 const char *put_switches (char *buf, size_t bufsize, uint32 sw);
 CONST char *get_glyph (const char *iptr, char *optr, char mchar);
 CONST char *get_glyph_nc (const char *iptr, char *optr, char mchar);
@@ -199,6 +255,7 @@ const char *sim_fmt_secs (double seconds);
 const char *sim_fmt_numeric (double number);
 const char *sprint_capac (DEVICE *dptr, UNIT *uptr);
 char *read_line (char *cptr, int32 size, FILE *stream);
+char *read_line_p (const char *prompt, char *ptr, int32 size, FILE *stream);
 void fprint_reg_help (FILE *st, DEVICE *dptr);
 void fprint_set_help (FILE *st, DEVICE *dptr);
 void fprint_show_help (FILE *st, DEVICE *dptr);
@@ -219,6 +276,7 @@ uint32 sim_brk_test (t_addr bloc, uint32 btyp);
 void sim_brk_clrspc (uint32 spc, uint32 btyp);
 void sim_brk_npc (uint32 cnt);
 void sim_brk_setact (const char *action);
+char *sim_brk_replace_act (char *new_action);
 const char *sim_brk_message(void);
 t_stat sim_send_input (SEND *snd, uint8 *data, size_t size, uint32 after, uint32 delay);
 t_stat sim_show_send_input (FILE *st, const SEND *snd);
@@ -250,22 +308,12 @@ void sim_debug_bits (uint32 dbits, DEVICE* dptr, BITFIELD* bitdefs,
 #if defined (__DECC) && defined (__VMS) && (defined (__VAX) || (__DECC_VER < 60590001))
 #define CANT_USE_MACRO_VA_ARGS 1
 #endif
-#if defined(__cplusplus)
-#ifdef CANT_USE_MACRO_VA_ARGS
-#define _sim_debug sim_debug
-void sim_debug (uint32 dbits, void* dptr, const char *fmt, ...) GCC_FMT_ATTR(3, 4);
-#else
-void _sim_debug (uint32 dbits, void* dptr, const char *fmt, ...) GCC_FMT_ATTR(3, 4);
-#define sim_debug(dbits, dptr, ...) do { if (sim_deb && dptr && ((dptr)->dctrl & (dbits))) _sim_debug (dbits, dptr, __VA_ARGS__);} while (0)
-#endif
-#else
 #ifdef CANT_USE_MACRO_VA_ARGS
 #define _sim_debug sim_debug
 void sim_debug (uint32 dbits, DEVICE* dptr, const char *fmt, ...) GCC_FMT_ATTR(3, 4);
 #else
 void _sim_debug (uint32 dbits, DEVICE* dptr, const char *fmt, ...) GCC_FMT_ATTR(3, 4);
-#define sim_debug(dbits, dptr, ...) do { if (sim_deb && dptr && ((dptr)->dctrl & dbits)) _sim_debug (dbits, dptr, __VA_ARGS__);} while (0)
-#endif
+#define sim_debug(dbits, dptr, ...) do { if (sim_deb && dptr && ((dptr)->dctrl & (dbits))) _sim_debug (dbits, dptr, __VA_ARGS__);} while (0)
 #endif
 void fprint_stopped_gen (FILE *st, t_stat v, REG *pc, DEVICE *dptr);
 #define SCP_HELP_FLAT   (1u << 31)       /* Force flat help when prompting is not possible */
@@ -287,6 +335,7 @@ extern DEVICE *sim_dfdev;
 extern UNIT *sim_dfunit;
 extern int32 sim_interval;
 extern int32 sim_switches;
+extern int32 sim_switch_number;
 extern int32 sim_quiet;
 extern int32 sim_step;
 extern t_stat sim_last_cmd_stat;                        /* Command Status */
@@ -299,12 +348,12 @@ extern struct timespec sim_deb_basetime;                /* debug base time for r
 extern DEVICE **sim_internal_devices;
 extern uint32 sim_internal_device_count;
 extern UNIT *sim_clock_queue;
-extern int32 sim_is_running;
+extern volatile t_bool sim_is_running;
 extern t_bool sim_processing_event;                     /* Called from sim_process_event */
 extern char *sim_prompt;                                /* prompt string */
 extern const char *sim_savename;                        /* Simulator Name used in Save/Restore files */
 extern t_value *sim_eval;
-extern volatile int32 stop_cpu;
+extern volatile t_bool stop_cpu;
 extern uint32 sim_brk_types;                            /* breakpoint info */
 extern uint32 sim_brk_dflt;
 extern uint32 sim_brk_summ;
