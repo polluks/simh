@@ -47,7 +47,8 @@ enum display_type {
     DIS_VR20 = 20,
     DIS_TYPE30 = 30,
     DIS_VR48 = 48,
-    DIS_TYPE340 = 340
+    DIS_TYPE340 = 340,
+    DIS_NG = 999,
 };
 
 /*
@@ -194,6 +195,11 @@ extern unsigned long spacewar_switches;
     SWSW('n', 'N',   0400000000, LR, CW) /* rotate R */         \
     SWSW('m', 'M',  01000000000, LR, CCW) /* rotate L */        \
     SWSW('/', '?',  02000000000, LR, HYPER) /* hyperspace */
+
+/*
+ * The last character typed in the display window.
+ */
+extern unsigned char display_last_char;
 
 /*
  * light pen "tip switch" activated (for VS60 emulation etc.)

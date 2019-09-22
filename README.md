@@ -1,7 +1,8 @@
-# SIMH v4.0 - Current
+# SIMH v4.0 - 19-01 Current
 
 [![Coverity Scan Build Status](https://scan.coverity.com/projects/11982/badge.svg)](https://scan.coverity.com/projects/simh)
 [![Build Status](https://travis-ci.org/simh/simh.svg)](https://travis-ci.org/simh/simh)
+[![AppVeyor](https://ci.appveyor.com/api/projects/status/github/simh/simh)](https://ci.appveyor.com/project/simh/simh/history)
 
 ## Table of Contents:
 [WHAT'S NEW since simh v3.9](#whats-new-since-simh-v39)  
@@ -10,6 +11,7 @@
 . . [New Functionality](#new-functionality)  
 . . . . [Remote Console Facility](#remote-console-facility)  
 . . . . [VAX/PDP11 Enhancements](#vaxpdp11-enhancements)  
+. . . . [PDP11 Specific Enhancements](#pdp11-specific-enhancements)  
 . . . . [PDP10 Enhancements](#pdp10-enhancements)  
 . . . . [SDS 940 Enhancements](#sds-940-enhancements)  
 . . . . [Terminal Multiplexer additions](#terminal-multiplexer-additions)  
@@ -52,13 +54,26 @@
 
 #### Matt Burke has implemented new VAX model simulators:
 
-    VAX/11 730
-    VAX/11 750
+    VAX-11/730
+    VAX-11/750
+    VAX 8200/8250
     VAX 8600/8650
-    MicroVAX I & VAXStation I
-    MicroVAX II & VAXStation II
+    MicroVAX I & VAXstation I
+    MicroVAX II & VAXstation II & VAXstation II/GPX
     rtVAX 1000 (or Industrial VAX 620)
-    
+    MicroVAX 2000 & VAXstation 2000
+    MicroVAX 3100 M10/M20
+    MicroVAX 3100 M10e/M20e
+    InfoServer 100
+    InfoServer 150 VXT
+    VAXstation 3100 M30
+    VAXstation 3100 M38
+    VAXstation 3100 M76
+    VAXstation 4000 VLC
+    VAXstation 4000 M60
+    MicroVAX 3100 M80
+    InfoServer 1000
+
 #### Howard Harte has implemented a Lincoln Labs TX-0 simulator.
 
 #### Gerardo Ospina has implemented a Manchester University SSEM (Small Scale Experimental Machine) simulator.
@@ -67,13 +82,15 @@
 
 #### Richard Cornwell has implemented the IBM 701, IBM 704, IBM 7010/1410, IBM 7070/7074, IBM 7080/702/705/7053 and IBM 7090/7094/709/704 simulators.
 
+#### Richard Cornwell has implemented the PDP6, PDP10-KA, and PDP10-KI simulators.
+
 #### Dave Bryan has implemented an HP-3000 Series III simulator.
 
 #### Updated AltairZ80 simulator from Peter Schorn.
 
 #### Updated HP2100 simulator from Dave Bryan.
 
-#### Beta Sigma 5, 6 & 7 simulator from Bob Supnik
+#### Sigma 5, 6 & 7 simulator from Bob Supnik
 
 #### Beta SAGE-II and PDQ-3 simulators from Holger Veit
 
@@ -82,8 +99,6 @@
 #### CDC 1700 simulator from John Forecast
 
 #### Hans-Åke Lund has implemented an SCELBI (SCientic-ELectronics-BIology) simulator.
-
-#### Roberto Sancho has implemented an IBM 650 simulator.
 
 ### New Host Platform support - HP-UX and AIX
 
@@ -114,6 +129,7 @@ A remote console session will close when an EOF character is entered (i.e. ^D or
     DMC11/DMR11 DDCMP DECnet device simulation.  Up to 8 DMC devices are supported.  Packet transport is via TCP or UDP connections.
     KDP11 on PDP11 for DECnet
     DUP11 on PDP11 for DECnet connectivity to talk to DMC, KDP or other DUP devices
+    CH11 on PDP11 and VAX780 for Chaosnet (from Lars Brinkhoff)
     DZ on Unibus systems can have up to 256 ports (default of 32), on 
         Qbus systems 128 port limit (default of 16).
     DZ devices optionally support full modem control (and port speed settings 
@@ -129,13 +145,19 @@ A remote console session will close when an EOF character is entered (i.e. ^D or
         when packets arrive too fast.
     MicroVAX 3900 has QVSS (VCB01) board available.
     MicroVAX 3900 and MicroVAX II have SET CPU AUTOBOOT option
-    MicroVAX 3900 has a SET CPU MODEL=(MicroVAX|VAXServer|VAXStation) command to change between system types
+    MicroVAX 3900 has a SET CPU MODEL=(MicroVAX|VAXserver|VAXstation) command to change between system types
     MicroVAX I has a SET CPU MODEL=(MicroVAX|VAXSTATION) command to change between system types
     MicroVAX II has a SET CPU MODEL=(MicroVAX|VAXSTATION) command to change between system types
+
+#### PDP11 Specific Enhancements
+    ROM (from Lars Brinkhoff) I/O page ROM support
+    NG (from Lars Brinkhoff) Knight vector display
+    DAZ (from Lars Brinkhoff) Dazzle Dart Input device
 
 #### PDP10 Enhancements
     KDP11 (from Timothe Litt) for DECnet connectivity to simulators with DMC, DUP or KDP devices
     DMR11 for DECnet connectivity to simulators with DMC, DUP or KDP devices on TOPS10.
+    CH11 (from Lars Brinkhoff) Chaosnet interface.
 
 #### SDS 940 Enhancements
     Support for SDS internal ASCII character encoding during display and data entry.
@@ -160,9 +182,9 @@ A remote console session will close when an EOF character is entered (i.e. ^D or
     Input character rates reflect the natural character arrival time based on the line speed.
 
 #### Video Display Capabilities
-Added support for monochrome displays with optional keyboards and mice.  
-The VAXstation QVSS device (VCB01) simulation uses this capability.
-Host platforms which have libSDL available can leverage this functionality.
+Added support for monochrome and color displays with optional keyboards and mice.  
+The VAXstation QVSS device (VCB01) and QDSS device (VCB02) simulations use these capabilities.
+Host platforms which have libSDL2 available can leverage this functionality.
 
 #### Asynchronous I/O
     * Disk and Tape I/O can be asynchronous.  Asynchronous support exists 
@@ -206,6 +228,13 @@ Host platforms which have libSDL available can leverage this functionality.
 #### Disk Extensions
     RAW Disk Access (including CDROM)
     Virtual Disk Container files, including differencing disks
+    File System type detection to accurately autosize disks.
+    Recognized file systems are: DEC ODS1, DEC ODS2, DEC RT11, Ultrix Partitions
+
+#### Tape Extensions
+    AWS format tape support
+    TAR format tape support
+    ANSI-VMS, ANSI-RSX11, ANSI-RSTS, ANSI-RT11 format tape support
 
 #### Embedded ROM support
     Simulators which have boot commands which load constant files as part of 
@@ -328,6 +357,7 @@ Device simulator authors can easily schedule their device polling activities to 
     SCREENSHOT filename.bmp          Save video window to the specified file
     SET ENV Name=Value               Set Environment variable
     SET ENV -p "Prompt" Name=Default Gather User input into an Environment Variable
+    SET ENV -a Name=Expression       Evaluate an expression and store result in an Environment Variable
     SET ASYNCH                       Enable Asynchronous I/O
     SET NOASYNCH                     Disable Asynchronous I/O
     SET VERIFY                       Enable command display while processing DO command files
@@ -358,6 +388,8 @@ Device simulator authors can easily schedule their device polling activities to 
     NOOP                             A no-op command
     ON                               Establish or cancel an ON condition dispatch
     IF                               Test some simulator state and conditionally execute commands
+    IF (C-style-expression)          Test some simulator state and conditionally execute commands
+    ELSE                             commands to execute when the previous IF wasn't true
     CD                               Change working directory
     SET DEFAULT                      Change working directory
     PWD                              Show working directory
@@ -475,7 +507,15 @@ The makefile provided requires GNU make, which is the default make facility for 
 
 ##### Build Dependencies
 
-Some simulators depend on external packages to provide the full scope of functionality they may be simulating.  These additional external packages may or may not be included in as part of the standard Operating System distributions.  
+Some simulators depend on external packages to provide the full scope of 
+functionality they may be simulating.  These additional external packages 
+may or may not be included in as part of the standard Operating System 
+distributions.  If simulators are being built that could provide more 
+functionality than the currently installed packages will provide, the build
+will succeed with reduced functionality (i.e. limited network or no video
+support), but suggestions will be provided as to what could provide full 
+functionality.
+
 
 ###### OS X - Dependencies
 
@@ -538,7 +578,7 @@ package must be available while building your simulator.  The simh-vms-pcap.zip
 file can be downloaded from https://github.com/simh/simh/archive/vms-pcap.zip   
 This link will return a file called simh-vms-pcap.zip which should be unpacked as follows:
 
-    $ unzip -aa simh-vms-pcap.zip
+    $ unzip -a simh-vms-pcap.zip
     $ rename [.simh-vms-pcap]pcap-vms.dir []
 
 The PCAP-VMS components are presumed (by the descript.mms file) to be 

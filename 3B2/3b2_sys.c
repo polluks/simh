@@ -35,6 +35,10 @@
 #include "3b2_if.h"
 #include "3b2_id.h"
 #include "3b2_mmu.h"
+#include "3b2_ctc.h"
+#include "3b2_ports.h"
+#include "3b2_ni.h"
+#include "3b2_mau.h"
 #include "3b2_sysdev.h"
 
 char sim_name[] = "AT&T 3B2 Model 400";
@@ -50,6 +54,7 @@ extern instr *cpu_instr;
 DEVICE *sim_devices[] = {
     &cpu_dev,
     &mmu_dev,
+    &mau_dev,
     &timer_dev,
     &tod_dev,
     &nvram_dev,
@@ -61,6 +66,9 @@ DEVICE *sim_devices[] = {
     &dmac_dev,
     &if_dev,
     &id_dev,
+    &ports_dev,
+    &ctc_dev,
+    &ni_dev,
     NULL
 };
 
@@ -73,12 +81,15 @@ const char *sim_stop_messages[] = {
     "Exception/Trap",
     "Exception Stack Too Deep",
     "Unimplemented MMU Feature",
-    "System Powered Off"
+    "System Powered Off",
+    "Infinite Loop",
+    "Simulator Error"
 };
 
 void full_reset()
 {
     cpu_reset(&cpu_dev);
+    mau_reset(&mau_dev);
     tti_reset(&tti_dev);
     contty_reset(&contty_dev);
     iu_timer_reset(&iu_timer_dev);
@@ -86,6 +97,9 @@ void full_reset()
     if_reset(&if_dev);
     id_reset(&id_dev);
     csr_reset(&csr_dev);
+    ports_reset(&ports_dev);
+    ctc_reset(&ctc_dev);
+    ni_reset(&ni_dev);
 }
 
 t_stat sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag)

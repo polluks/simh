@@ -247,7 +247,6 @@
   ------------------------------------------------------------------------------
 */
 
-#include <assert.h>
 #include "pdp11_xq.h"
 #include "pdp11_xq_bootrom.h"
 
@@ -1258,7 +1257,7 @@ t_stat xq_process_rbdl(CTLR* xq)
             xq->var->rbdl_buf[4] |= XQ_RST_ESETUP;/* loopback flag */
         break;
       case ETH_ITM_NORMAL: /* normal packet */
-        rbl -= 60;    /* keeps max packet size in 11 bits */
+        rbl = item->packet.len - 60;           /* keeps max packet size in 11 bits */
         xq->var->rbdl_buf[4] = (rbl & 0x0700); /* high bits of rbl */
         xq->var->rbdl_buf[4] |= 0x00f8;        /* set reserved bits to 1 */
         break;
@@ -1823,7 +1822,9 @@ t_stat xq_process_turbo_rbdl(CTLR* xq)
       xq->var->ReadQ.loss = 0;          /* reset loss counter */
     }
 
-    Map_ReadW (rdra+(uint32)(((char *)(&xq->var->rring[xq->var->rbindx].rmd3))-((char *)&xq->var->rring)), sizeof(xq->var->rring[xq->var->rbindx].rmd3), (uint16 *)&xq->var->rring[xq->var->rbindx].rmd3);
+    status = Map_ReadW (rdra+(uint32)(((char *)(&xq->var->rring[xq->var->rbindx].rmd3))-((char *)&xq->var->rring)), sizeof(xq->var->rring[xq->var->rbindx].rmd3), (uint16 *)&xq->var->rring[xq->var->rbindx].rmd3);
+    if (status != SCPE_OK)
+      return xq_nxm_error(xq);
     if (xq->var->rring[xq->var->rbindx].rmd3 & XQ_RMD3_OWN)
       xq->var->rring[i].rmd2 |= XQ_RMD2_EOR;
 
@@ -2554,7 +2555,19 @@ t_stat xq_reset(DEVICE* dptr)
 
   /* One time only initializations */
   if (!xq->var->initialized) {
+    char uname[16];
+
     xq->var->initialized = TRUE;
+    sprintf (uname, "%s-SVC", dptr->name);
+    sim_set_uname (&dptr->units[0], uname);
+    sprintf (uname, "%s-TMRSVC", dptr->name);
+    sim_set_uname (&dptr->units[1], uname);
+    sprintf (uname, "%s-STARTSVC", dptr->name);
+    sim_set_uname (&dptr->units[2], uname);
+    sprintf (uname, "%s-RCVSVC", dptr->name);
+    sim_set_uname (&dptr->units[3], uname);
+    sprintf (uname, "%s-SRQRSVC", dptr->name);
+    sim_set_uname (&dptr->units[4], uname);
     /* Set an initial MAC address in the DEC range */
     xq_setmac (dptr->units, 0, "08:00:2B:00:00:00/24", NULL);
     }
@@ -2705,10 +2718,10 @@ t_stat xq_system_id (CTLR* xq, const ETH_MAC dest, uint16 receipt_id)
   memcpy (&msg[34], xq->var->mac, sizeof(ETH_MAC)); /* ROM address */
 
                                           /* DEVICE TYPE */
-  msg[40] = 37;                           /* type */
+  msg[40] = 100;                          /* type */
   msg[41] = 0x00;                         /* type */
   msg[42] = 0x01;                         /* length */
-  msg[43] = 0x11;                         /* value (0x11=DELQA) */
+  msg[43] = 0x25;                         /* value (0x25(37)=DELQA) */
   if (xq->var->type == XQ_T_DELQA_PLUS)   /* DELQA-T has different Device ID */
     msg[43] = 0x4B;                       /* value (0x4B(75)=DELQA-T) */
 
@@ -2890,10 +2903,6 @@ t_stat xq_attach(UNIT* uptr, CONST char* cptr)
     xq->var->must_poll = (SCPE_OK != eth_clr_async(xq->var->etherface));
   }
   if (SCPE_OK != eth_check_address_conflict (xq->var->etherface, &xq->var->mac)) {
-    char buf[32];
-
-    eth_mac_fmt(&xq->var->mac, buf);     /* format ethernet mac address */
-    sim_printf("%s: MAC Address Conflict on LAN for address %s, change the MAC address to a unique value\n", xq->dev->name, buf);
     eth_close(xq->var->etherface);
     free(tptr);
     free(xq->var->etherface);
@@ -3142,7 +3151,7 @@ DIB *dib = (DIB *)dptr->ctxt;
 extern int32 REGFILE[6][2];                 /* R0-R5, two sets */
 
 for (i = 0; i < BOOT_LEN; i++)
-    M[(BOOT_START >> 1) + i] = boot_rom[i];
+    WrMemW (BOOT_START + (2 * i), boot_rom[i]);
 cpu_set_boot (BOOT_ENTRY);
 REGFILE[0][0] = ((dptr == &xq_dev) ? 4 : 5);
 return SCPE_OK;
@@ -3302,19 +3311,28 @@ const char helpString[] =
 #endif
     "+sim> ATTACH %D udp:1234:remote.host.com:1234\n"
     "\n"
-    "2 Examples\n"
-    " To configure two simulators to talk to each other use the following\n"
-    " example:\n"
+    "2 Examples\n\n"
+    " Given a simulator that only wants to talk IP to the outside world use\n"
+    " the following example:\n"
     " \n"
-    " Machine 1\n"
-    "+sim> SET %D ENABLE\n"
-    "+sim> SET %D PEER=LOCALHOST:2222\n"
-    "+sim> ATTACH %D 1111\n"
+    "+sim> ATTACH %D NAT:\n"
     " \n"
-    " Machine 2\n"
-    "+sim> SET %D ENABLE\n"
-    "+sim> SET %U PEER=LOCALHOST:1111\n"
-    "+sim> ATTACH %U 2222\n"
+    " Given a simulator that only wants to talk IP but also wants to allow\n"
+    " incoming telnet use the following example:\n"
+    " \n"
+    "+sim> ATTACH %D NAT:tcp=2323:10.0.2.15:23\n"
+    " \n"
+    " This allows connections to host port 2323 to reach port 23 on the\n"
+    " simulated which is configured with IP Address 10.0.2.15\n"
+    "\n"
+    " Given a simulator that only wants to talk IP but also wants to allow\n"
+    " incoming telnet and ftp use the following example:\n"
+    " \n"
+    "+sim> ATTACH %D NAT:tcp=2323:10.0.2.15:23,tcp=2121:10.0.2.15:21\n"
+    " \n"
+    " This allows connections to host port 2323 to reach port 23 on the\n"
+    " simulated which is configured with IP Address 10.0.2.15 and connections\n"
+    " to host port 2121 to reach port 21 on the simulated system.\n"
     "\n"
     "1 Monitoring\n"
     " The %D device configuration and state can be displayed with one of the\n"
@@ -3393,7 +3411,8 @@ const char helpString[] =
     "\n"
     " Due to this significant speed mismatch, there can be issues when\n"
     " simulated systems attempt to communicate with real PDP11 and VAX systems\n"
-    " on the LAN.  See SET %D THROTTLE to help accommodate such communications.\n"
+    " on the LAN.  See SET %D THROTTLE to help accommodate such communications\n"
+    " HELP %D CONF SET THROTTLE\n"
     "1 Related Devices\n"
     " The %D can facilitate communication with other simh simulators which\n"
     " have emulated Ethernet devices available as well as real systems that\n"

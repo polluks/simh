@@ -1,4 +1,4 @@
-/* 3b2_cpu.c: AT&T 3B2 Model 400 CPU (WE32100) Implementation
+ /* 3b2_cpu.c: AT&T 3B2 Model 400 CPU (WE32100) Implementation
 
    Copyright (c) 2017, Seth J. Morabito
 
@@ -28,12 +28,47 @@
    from the author.
 */
 
-#include <assert.h>
-
 #include "3b2_cpu.h"
 #include "rom_400_bin.h"
 
 #define MAX_SUB_RETURN_SKIP 9
+
+/* Static function declarations */
+static uint32 cpu_effective_address(operand * op);
+static uint32 cpu_read_op(operand * op);
+static void cpu_write_op(operand * op, t_uint64 val);
+static void cpu_set_nz_flags(t_uint64 data, operand * op);
+static void cpu_calc_ints();
+static SIM_INLINE void cpu_on_normal_exception(uint8 isc);
+static SIM_INLINE void cpu_on_stack_exception(uint8 isc);
+static SIM_INLINE void cpu_on_process_exception(uint8 isc);
+static SIM_INLINE void cpu_on_reset_exception(uint8 isc);
+static SIM_INLINE void cpu_perform_gate(uint32 index1, uint32 index2);
+static SIM_INLINE void clear_instruction(instr *inst);
+static SIM_INLINE int8 op_type(operand *op);
+static SIM_INLINE t_bool op_signed(operand *op);
+static SIM_INLINE uint32 sign_extend_b(uint8 val);
+static SIM_INLINE uint32 sign_extend_h(uint16 val);
+static SIM_INLINE t_bool cpu_z_flag();
+static SIM_INLINE t_bool cpu_n_flag();
+static SIM_INLINE t_bool cpu_c_flag();
+static SIM_INLINE t_bool cpu_v_flag();
+static SIM_INLINE void cpu_set_z_flag(t_bool val);
+static SIM_INLINE void cpu_set_n_flag(t_bool val);
+static SIM_INLINE void cpu_set_c_flag(t_bool val);
+static SIM_INLINE void cpu_set_v_flag(t_bool val);
+static SIM_INLINE void cpu_set_v_flag_op(t_uint64 val, operand *op);
+static SIM_INLINE uint8 cpu_execution_level();
+static SIM_INLINE void cpu_push_word(uint32 val);
+static SIM_INLINE uint32 cpu_pop_word();
+static SIM_INLINE void irq_push_word(uint32 val);
+static SIM_INLINE uint32 irq_pop_word();
+static SIM_INLINE void cpu_context_switch_1(uint32 pcbp);
+static SIM_INLINE void cpu_context_switch_2(uint32 pcbp);
+static SIM_INLINE void cpu_context_switch_3(uint32 pcbp);
+static SIM_INLINE t_bool op_is_psw(operand *op);
+static SIM_INLINE void add(t_uint64 a, t_uint64 b, operand *dst);
+static SIM_INLINE void sub(t_uint64 a, t_uint64 b, operand *dst);
 
 /* RO memory. */
 uint32 *ROM = NULL;
@@ -68,6 +103,8 @@ extern uint16 csr_data;
 uint32 R[16];
 
 /* Other global CPU state */
+uint8  cpu_int_ipl    = 0;         /* Interrupt IPL level */
+uint8  cpu_int_vec    = 0;         /* Interrupt vector */
 t_bool cpu_nmi        = FALSE;     /* If set, there has been an NMI */
 
 int32  pc_incr        = 0;         /* Length (in bytes) of instruction
@@ -76,6 +113,11 @@ t_bool cpu_ex_halt    = FALSE;     /* Flag to halt on exceptions /
                                       traps */
 t_bool cpu_km         = FALSE;     /* If true, kernel mode has been forced
                                       for memory access */
+CTAB sys_cmd[] = {
+    { "BOOT", &sys_boot, RU_BOOT,
+      "bo{ot}                   boot simulator\n", NULL, &run_cmd_message },
+    { NULL }
+};
 
 BITFIELD psw_bits[] = {
     BITFFMT(ET,2,%d),    /* Exception Type */
@@ -127,16 +169,84 @@ static DEBTAB cpu_deb_tab[] = {
     { "EXECUTE",    EXECUTE_MSG,    "Instruction execute"   },
     { "INIT",       INIT_MSG,       "Initialization"        },
     { "IRQ",        IRQ_MSG,        "Interrupt Handling"    },
-    { "IO",         IO_D_MSG,       "I/O Dispatch"          },
-    { "TRACE",      TRACE_MSG,      "Call Trace"            },
+    { "IO",         IO_DBG,         "I/O Dispatch"          },
+    { "CIO",        CIO_DBG,        "Common I/O Interface"  },
+    { "TRACE",      TRACE_DBG,      "Call Trace"            },
     { "ERROR",      ERR_MSG,        "Error"                 },
-    { NULL,         0                                       }
+    { NULL,         0,              NULL                    }
 };
 
 UNIT cpu_unit = { UDATA (NULL, UNIT_FIX|UNIT_BINK|UNIT_IDLE, MAXMEMSIZE) };
 
-#define UNIT_V_EXHALT   (UNIT_V_UF + 0)                 /* halt to console */
-#define UNIT_EXHALT     (1u << UNIT_V_EXHALT)
+/*
+ * The following commands deposit a small calibration program into
+ * mainstore at 0x2000000 and then set the program counter to the
+ * start address. Simulator calibration will execute this program to
+ * establish a baseline execution rate.
+ *
+ * Program:
+ *   84 01 46        MOVW    &0x1,%r6
+ *   84 46 47        MOVW    %r6,%r7
+ *   84 47 48        MOVW    %r7,%r8
+ *   90 48           INCW    %r8
+ *   28 48           TSTW    %r8
+ *   4f 0b           BLEB    0xb
+ *   e4 07 48 40     MODW3   &0x7,%r8,%r0
+ *   84 40 47        MOVW    %r0,%r7
+ *   7b 0b           BRB     0xb
+ *   8c 48 40        MNEGW   %r8,%r0
+ *   a4 07 40        MODW2   &0x7,%r0
+ *   84 40 47        MOVW    %r0,%r7
+ *   e8 47 48 40     MULW3   %r7,%r8,%r0
+ *   9c 07 40        ADDW2   &0x7,%r0
+ *   84 40 46        MOVW    %r0,%r6
+ *   28 48           TSTW    %r8
+ *   4f 05           BLEB    0x5
+ *   a8 03 47        MULW2   &0x3,%r7
+ *   d0 01 46 46     LLSW3   &0x1,%r6,%r6
+ *   28 46           TSTW    %r6
+ *   4f 09           BLEB    0x9
+ *   ec 46 47 40     DIVW3   %r6,%r7,%r0
+ *   84 40 48        MOVW    %r0,%r8
+ *   d4 01 47 47     LRSW3   &0x1,%r7,%r7
+ *   3c 48 47        CMPW    %r8,%r7
+ *   4f 05           BLEB    0x5
+ *   bc 48 47        SUBW2   %r8,%r7
+ *   7b bc           BRB     -0x44
+ */
+static const char *att3b2_clock_precalibrate_commands[] = {
+    "-v 2000000 84014684",
+    "-v 2000004 46478447",
+    "-v 2000008 48904828",
+    "-v 200000c 484f0be4",
+    "-v 2000010 07484084",
+    "-v 2000014 40477b0b",
+    "-v 2000018 8c4840a4",
+    "-v 200001c 07408440",
+    "-v 2000020 47e84748",
+    "-v 2000024 409c0740",
+    "-v 2000028 84404628",
+    "-v 200002c 484f05a8",
+    "-v 2000030 0347d001",
+    "-v 2000034 46462846",
+    "-v 2000038 4f09ec46",
+    "-v 200003c 47408440",
+    "-v 2000040 48d40147",
+    "-v 2000044 473c4847",
+    "-v 2000048 4f05bc48",
+    "-v 200004c 477bbc00",
+    "PC 2000000",
+    NULL
+};
+
+/*
+ * TODO: This works fine for now, but the moment we want to emulate
+ * SCSI (0x0100) or EPORTS (0x0102) we're in trouble!
+ */
+const char *cio_names[8] = {
+    "", "SBD", "NI", "PORTS",
+    "*VOID*", "CTC", "NAU", "*VOID*"
+};
 
 MTAB cpu_mod[] = {
     { UNIT_MSIZE, (1u << 20), NULL, "1M",
@@ -147,11 +257,17 @@ MTAB cpu_mod[] = {
       &cpu_set_size, NULL, NULL, "Set Memory to 4M bytes" },
     { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_SHP, 0, "HISTORY", "HISTORY",
       &cpu_set_hist, &cpu_show_hist, NULL, "Displays instruction history" },
+    { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_SHP, 0, "VIRTUAL", NULL,
+      NULL, &cpu_show_virt, NULL, "Show translation for virtual address" },
+    { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_SHP, 0, "STACK", NULL,
+      NULL, &cpu_show_stack, NULL, "Display the current stack with optional depth" },
+    { MTAB_XTD|MTAB_VDV|MTAB_NMO, 0, "CIO", NULL,
+      NULL, &cpu_show_cio, NULL, "Display CIO configuration" },
     { MTAB_XTD|MTAB_VDV, 0, "IDLE", "IDLE", &sim_set_idle, &sim_show_idle },
     { MTAB_XTD|MTAB_VDV, 0, NULL, "NOIDLE", &sim_clr_idle, NULL },
-    { UNIT_EXHALT, UNIT_EXHALT, "Halt on Exception", "EX_HALT",
+    { UNIT_EXHALT, UNIT_EXHALT, "Halt on Exception", "EXHALT",
       NULL, NULL, NULL, "Enables Halt on exceptions and traps" },
-    { UNIT_EXHALT, 0, "No halt on exception", "NOEX_HALT",
+    { UNIT_EXHALT, 0, "No halt on exception", "NOEXHALT",
       NULL, NULL, NULL, "Disables Halt on exceptions and traps" },
     { 0 }
 };
@@ -178,7 +294,11 @@ DEVICE cpu_dev = {
     0,                   /* Debug control flags */
     cpu_deb_tab,         /* Debug flag names */
     &cpu_set_size,       /* Memory size change */
-    NULL                 /* Logical names */
+    NULL,                /* Logical names */
+    NULL,                /* Help routine */
+    NULL,                /* Attach Help Routine */
+    NULL,                /* Help Context */
+    &cpu_description     /* Device Description */
 };
 
 #define HWORD_OP_COUNT 11
@@ -201,12 +321,12 @@ mnemonic hword_ops[HWORD_OP_COUNT] = {
 mnemonic ops[256] = {
     {0x00,  0, OP_NONE, NA, "halt",   -1, -1, -1, -1},
     {0x01, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
-    {0x02,  2, OP_COPR, WD, "SPOPRD", -1, -1, -1, -1},
-    {0x03,  3, OP_COPR, WD, "SPOPD2", -1, -1, -1, -1},
+    {0x02,  2, OP_COPR, WD, "SPOPRD",  1, -1, -1, -1},
+    {0x03,  3, OP_COPR, WD, "SPOPD2",  1, -1, -1,  2},
     {0x04,  2, OP_DESC, WD, "MOVAW",   0, -1, -1,  1},
     {0x05, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
-    {0x06,  2, OP_COPR, WD, "SPOPRT", -1, -1, -1, -1},
-    {0x07,  3, OP_COPR, WD, "SPOPT2", -1, -1, -1, -1},
+    {0x06,  2, OP_COPR, WD, "SPOPRT",  1, -1, -1, -1},
+    {0x07,  3, OP_COPR, WD, "SPOPT2",  1, -1, -1,  2},
     {0x08,  0, OP_NONE, NA, "RET",    -1, -1, -1, -1},
     {0x09, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x0a, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
@@ -218,11 +338,11 @@ mnemonic ops[256] = {
     {0x10,  1, OP_DESC, WD, "SAVE",    0, -1, -1, -1},
     {0x11, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x12, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
-    {0x13,  2, OP_COPR, WD, "SPOPWD", -1, -1, -1, -1},
+    {0x13,  2, OP_COPR, WD, "SPOPWD", -1, -1, -1,  1},
     {0x14,  1, OP_BYTE, NA, "EXTOP",  -1, -1, -1, -1},
     {0x15, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x16, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
-    {0x17,  2, OP_COPR, WD, "SPOPWT", -1, -1, -1, -1},
+    {0x17,  2, OP_COPR, WD, "SPOPWT", -1, -1, -1,  1},
     {0x18,  1, OP_DESC, WD, "RESTORE", 0, -1, -1, -1},
     {0x19, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x1a, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
@@ -233,8 +353,8 @@ mnemonic ops[256] = {
     {0x1f,  1, OP_DESC, BT, "SWAPBI", -1, -1, -1,  0}, /* 3-122 252 */
     {0x20,  1, OP_DESC, WD, "POPW",   -1, -1, -1,  0},
     {0x21, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
-    {0x22,  2, OP_COPR, WD, "SPOPRS", -1, -1, -1, -1},
-    {0x23,  3, OP_COPR, WD, "SPOPS2", -1, -1, -1, -1},
+    {0x22,  2, OP_COPR, WD, "SPOPRS",  1, -1, -1, -1},
+    {0x23,  3, OP_COPR, WD, "SPOPS2",  1, -1, -1,  2},
     {0x24,  1, OP_DESC, NA, "JMP",    -1, -1, -1,  0},
     {0x25, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x26, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
@@ -250,7 +370,7 @@ mnemonic ops[256] = {
     {0x30, -1, OP_NONE, NA, "???",    -1, -1, -1, -1}, /* Two-byte instructions */
     {0x31, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x32,  1, OP_COPR, WD, "SPOP",   -1, -1, -1, -1},
-    {0x33,  2, OP_COPR, WD, "SPOPWS", -1, -1, -1, -1},
+    {0x33,  2, OP_COPR, WD, "SPOPWS", -1, -1, -1,  1},
     {0x34,  1, OP_DESC, WD, "JSB",    -1, -1, -1,  0},
     {0x35, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x36,  1, OP_HALF, NA, "BSBH",   -1, -1, -1,  0},
@@ -493,6 +613,54 @@ const uint32 shift_32_table[65] =
     0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff
 };
 
+t_stat cpu_show_stack(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
+{
+    uint32 i, j;
+    uint32 addr, v, count;
+    uint8 tmp;
+    char *cptr = (char *) desc;
+    t_stat result;
+
+    if (cptr) {
+        count = (size_t) get_uint(cptr, 10, 128, &result);
+        if ((result != SCPE_OK) || (count == 0)) {
+            return SCPE_ARG;
+        }
+    } else {
+        count = 8;
+    }
+
+    for (i = 0; i < (count * 4); i += 4) {
+        v = 0;
+        addr = R[NUM_SP] - i;
+
+        for (j = 0; j < 4; j++) {
+            result = examine(addr + j, &tmp);
+            if (result != SCPE_OK) {
+                return result;
+            }
+            v |= (uint32) tmp << ((3 - j) * 8);
+        }
+
+        fprintf(st, "  %08x: %08x\n", addr, v);
+    }
+
+    return SCPE_OK;
+}
+
+t_stat cpu_show_cio(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
+{
+    uint32 i;
+
+    fprintf(st, "  SLOT     DEVICE\n");
+    fprintf(st, "---------------------\n");
+    for (i = 0; i < CIO_SLOTS; i++) {
+        fprintf(st, "   %d        %s\n", i, cio_names[cio[i].id & 0x7]);
+    }
+
+    return SCPE_OK;
+}
+
 void cpu_load_rom()
 {
     uint32 i, index, sc, mask, val;
@@ -509,6 +677,19 @@ void cpu_load_rom()
 
         ROM[index] = (ROM[index] & ~mask) | (val << sc);
     }
+}
+
+t_stat sys_boot(int32 flag, CONST char *ptr)
+{
+    char gbuf[CBUFSIZE];
+
+    get_glyph(ptr, gbuf, 0);
+
+    if (gbuf[0] && strcmp(gbuf, "CPU")) {
+        return SCPE_ARG;
+    }
+
+    return run_cmd(flag, "CPU");
 }
 
 t_stat cpu_boot(int32 unit_num, DEVICE *dptr)
@@ -529,6 +710,10 @@ t_stat cpu_boot(int32 unit_num, DEVICE *dptr)
      *     in the PCB, if bit I in PSW is set.
      */
 
+    sim_debug(EXECUTE_MSG, &cpu_dev,
+              "CPU Boot/Reset Initiated. PC=%08x SP=%08x\n",
+              R[NUM_PC], R[NUM_SP]);
+
     mmu_disable();
 
     R[NUM_PCBP] = pread_w(0x80);
@@ -544,10 +729,6 @@ t_stat cpu_boot(int32 unit_num, DEVICE *dptr)
     /* set ISC to External Reset */
     R[NUM_PSW] &= ~PSW_ISC_MASK;
     R[NUM_PSW] |= 3 << PSW_ISC ;
-
-    sim_debug(EXECUTE_MSG, &cpu_dev,
-              ">>> CPU BOOT/RESET COMPLETE. PC=%08x SP=%08x\n",
-              R[NUM_PC], R[NUM_SP]);
 
     return SCPE_OK;
 }
@@ -596,6 +777,13 @@ t_stat cpu_dep(t_value val, t_addr addr, UNIT *uptr, int32 sw)
 t_stat cpu_reset(DEVICE *dptr)
 {
     int i;
+
+    /* Link in our special "boot" command so we can boot with both
+     * "BO{OT}" and "BO{OT} CPU" */
+    sim_vm_cmd = sys_cmd;
+
+    /* Set up the pre-calibration routine */
+    sim_clock_precalibrate_commands = att3b2_clock_precalibrate_commands;
 
     if (!sim_is_running) {
         /* Clear registers */
@@ -851,7 +1039,7 @@ t_stat fprint_sym_m(FILE *of, t_addr addr, t_value *val)
                 fprintf(of, "&0x%x", w);
                 break;
             default:
-                fprintf(of, "%d(%%fp)", reg);
+                fprintf(of, "%d(%%fp)", (int8) reg);
                 break;
             }
             break;
@@ -862,7 +1050,7 @@ t_stat fprint_sym_m(FILE *of, t_addr addr, t_value *val)
                 fprintf(of, "$0x%x", w);
                 break;
             default:
-                fprintf(of, "%d(%%ap)", reg);
+                fprintf(of, "%d(%%ap)", (int8) reg);
                 break;
             }
             break;
@@ -889,12 +1077,12 @@ t_stat fprint_sym_m(FILE *of, t_addr addr, t_value *val)
         case 12:  /* Byte Displacement */
             OP_R_B(w, val, vp);
             cpu_register_name(reg, reg_name, 8);
-            fprintf(of, "%d(%s)", w, reg_name);
+            fprintf(of, "%d(%s)", (int8) w, reg_name);
             break;
         case 13:  /* Byte Displacement Deferred */
             OP_R_B(w, val, vp);
             cpu_register_name(reg, reg_name, 8);
-            fprintf(of, "*%d(%s)", w, reg_name);
+            fprintf(of, "*%d(%s)", (int8) w, reg_name);
             break;
         case 14:
             if (reg == 15) {
@@ -935,6 +1123,34 @@ void fprint_sym_hist(FILE *st, instr *ip)
         }
     }
 }
+
+t_stat cpu_show_virt(FILE *of, UNIT *uptr, int32 val, CONST void *desc)
+{
+    uint32 va, pa;
+    t_stat r;
+
+    const char *cptr = (const char *)desc;
+    if (cptr) {
+        va = (uint32) get_uint(cptr, 16, 0xffffffff, &r);
+        if (r == SCPE_OK) {
+            r = mmu_decode_va(va, 0, FALSE, &pa);
+            if (r == SCPE_OK) {
+                fprintf(of, "Virtual %08x = Physical %08x\n", va, pa);
+                return SCPE_OK;
+            } else {
+                fprintf(of, "Translation not possible for virtual address.\n");
+                return SCPE_ARG;
+            }
+        } else {
+            fprintf(of, "Illegal address format.\n");
+            return SCPE_ARG;
+        }
+    }
+
+    fprintf(of, "Address argument required.\n");
+    return SCPE_ARG;
+}
+
 
 t_stat cpu_show_hist(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
@@ -1491,10 +1707,13 @@ static SIM_INLINE void cpu_context_switch_1(uint32 new_pcbp)
     }
 }
 
-t_bool cpu_on_interrupt(uint8 ipl)
+void cpu_on_interrupt(uint16 vec)
 {
     uint32 new_pcbp;
-    uint16 id = ipl; /* TODO: Does this need to be uint16? */
+
+    sim_debug(IRQ_MSG, &cpu_dev,
+              "[%08x] [cpu_on_interrupt] vec=%02x (%d)\n",
+              R[NUM_PC], vec, vec);
 
     /*
      * "If a nonmaskable interrupt request is received, an auto-vector
@@ -1503,7 +1722,7 @@ t_bool cpu_on_interrupt(uint8 ipl)
      * Interrupt-ID is fetched. The value 0 is used as the ID."
      */
     if (cpu_nmi) {
-        id = 0;
+        vec = 0;
     }
 
     cpu_km = TRUE;
@@ -1511,10 +1730,11 @@ t_bool cpu_on_interrupt(uint8 ipl)
     if (R[NUM_PSW] & PSW_QIE_MASK) {
         /* TODO: Maybe implement quick interrupts at some point, but
            the 3B2 ROM and SVR3 don't appear to use them. */
-        assert(0);
+        stop_reason = STOP_ERR;
+        return;
     }
 
-    new_pcbp = read_w(0x8c + (4 * id), ACC_AF);
+    new_pcbp = read_w(0x8c + (4 * vec), ACC_AF);
 
     /* Save the old PCBP */
     irq_push_word(R[NUM_PCBP]);
@@ -1535,8 +1755,6 @@ t_bool cpu_on_interrupt(uint8 ipl)
     cpu_context_switch_3(new_pcbp);
 
     cpu_km = FALSE;
-
-    return TRUE;
 }
 
 t_stat sim_instr(void)
@@ -1552,6 +1770,12 @@ t_stat sim_instr(void)
     /* Used for field calculation */
     uint32   width, offset;
     uint32   mask;
+
+    /* Generic index */
+    uint32   i;
+
+    /* Used by oprocessor instructions */
+    uint32   coprocessor_word;
 
     operand *src1, *src2, *src3, *dst;
 
@@ -1637,6 +1861,8 @@ t_stat sim_instr(void)
             cpu_exception_stack_depth--;
         }
 
+        AIO_CHECK_EVENT;
+
         if (sim_interval-- <= 0) {
             if ((stop_reason = sim_process_event())) {
                 break;
@@ -1661,9 +1887,24 @@ t_stat sim_instr(void)
             increment_modep_b();
         }
 
-        /* Process pending IRQ, if applicable */
-        if (PSW_CUR_IPL < cpu_ipl()) {
-            cpu_on_interrupt(cpu_ipl());
+        /* Set the correct IRQ state */
+        cpu_calc_ints();
+
+        if (PSW_CUR_IPL < cpu_int_ipl) {
+            cpu_on_interrupt(cpu_int_vec);
+            for (i = 0; i < CIO_SLOTS; i++) {
+                if (cio[i].intr &&
+                    cio[i].ipl == cpu_int_ipl &&
+                    cio[i].ivec == cpu_int_vec) {
+                    sim_debug(CIO_DBG, &cpu_dev,
+                              "[%08x] [IRQ] Handling CIO interrupt for card %d ivec=%02x\n",
+                              R[NUM_PC], i, cpu_int_vec);
+
+                    cio[i].intr = FALSE;
+                }
+            }
+            cpu_int_ipl = 0;
+            cpu_int_vec = 0;
             cpu_nmi = FALSE;
             cpu_in_wait = FALSE;
         }
@@ -1696,6 +1937,11 @@ t_stat sim_instr(void)
         /*
          * Operate on the decoded instruction.
          */
+
+        /* Special case for coprocessor instructions */
+        if (cpu_instr->mn->mode == OP_COPR) {
+            coprocessor_word = cpu_instr->operands[0].embedded.w;
+        }
 
         /* Get the operands */
         if (cpu_instr->mn->src_op1 >= 0) {
@@ -1883,6 +2129,11 @@ t_stat sim_instr(void)
             break;
         case BRB:
             pc_incr = sign_extend_b(dst->embedded.b);
+            /* BRB is commonly used to halt the processor in a tight
+             * infinite loop. */
+            if (pc_incr == 0) {
+                stop_reason = STOP_LOOP;
+            }
             break;
         case BSBH:
             cpu_push_word(R[NUM_PC] + pc_incr);
@@ -1969,30 +2220,31 @@ t_stat sim_instr(void)
             cpu_set_v_flag(0);
             break;
         case CMPW:
-            a = cpu_read_op(src1);
-            b = cpu_read_op(src2);
-
-            cpu_set_z_flag((uint32)b == (uint32)a);
-            cpu_set_n_flag((int32)b < (int32)a);
-            cpu_set_c_flag((uint32)b < (uint32)a);
-            cpu_set_v_flag(0);
-            break;
         case CMPH:
-            a = cpu_read_op(src1);
-            b = cpu_read_op(src2);
-
-            cpu_set_z_flag((uint16)b == (uint16)a);
-            cpu_set_n_flag((int16)b < (int16)a);
-            cpu_set_c_flag((uint16)b < (uint16)a);
-            cpu_set_v_flag(0);
-            break;
         case CMPB:
             a = cpu_read_op(src1);
             b = cpu_read_op(src2);
 
-            cpu_set_z_flag((uint8)b == (uint8)a);
-            cpu_set_n_flag((int8)b < (int8)a);
-            cpu_set_c_flag((uint8)b < (uint8)a);
+            switch(op_type(src2)) {
+            case WD:
+            case UW:
+                cpu_set_n_flag((int32)b < (int32)a);
+                break;
+            case HW:
+            case UH:
+                cpu_set_n_flag((int16)b < (int16)a);
+                break;
+            case BT:
+            case SB:
+                cpu_set_n_flag((int8)b < (int8)a);
+                break;
+            default:
+                /* Unreachable */
+                break;
+            }
+
+            cpu_set_z_flag(b == a);
+            cpu_set_c_flag(b < a);
             cpu_set_v_flag(0);
             break;
         case DECW:
@@ -2310,7 +2562,7 @@ t_stat sim_instr(void)
             }
             break;
         case STREND:
-            while (read_b(R[0], ACC_AF) != 0) {
+            while (read_b(R[0], ACC_AF) != '\0') {
                 R[0]++;
             }
             break;
@@ -2663,19 +2915,36 @@ t_stat sim_instr(void)
             pc_incr = 0;
             break;
         case SPOP:
+            /* Memory fault is signaled when no support processor is
+               active */
+            if (mau_broadcast(coprocessor_word, 0, 0) != SCPE_OK) {
+                cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
+            }
+            break;
         case SPOPD2:
         case SPOPS2:
         case SPOPT2:
+            a = cpu_effective_address(src1);
+            b = cpu_effective_address(dst);
+            if (mau_broadcast(coprocessor_word, a, b) != SCPE_OK) {
+                cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
+            }
+            break;
         case SPOPRD:
         case SPOPRS:
         case SPOPRT:
+            a = cpu_effective_address(src1);
+            if (mau_broadcast(coprocessor_word, a, 0) != SCPE_OK) {
+                cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
+            }
+            break;
         case SPOPWD:
         case SPOPWS:
         case SPOPWT:
-            /* Memory fault is signaled when no support processor is
-               active */
-            csr_data |= CSRTIMO;
-            cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
+            a = cpu_effective_address(dst);
+            if (mau_broadcast(coprocessor_word, 0, a) != SCPE_OK) {
+                cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
+            }
             break;
         case SUBW2:
         case SUBH2:
@@ -2752,15 +3021,19 @@ t_stat sim_instr(void)
             R[NUM_FP] = R[NUM_SP];
             break;
         case STRCPY:
-            a = 0;
-            b = 0;
-
-            do {
-                b = read_b(R[0] + a, ACC_AF);
-                write_b(R[1] + a, (uint8) b);
-                a++;
-            } while (b != '\0');
-
+            /* The STRCPY instruction will always copy the NULL
+             * terminator of a string. However, copying the NULL
+             * terminator never increments the source or destination
+             * pointer! */
+            while (1) {
+                a = read_b(R[0], ACC_AF);
+                write_b(R[1], (uint8) a);
+                if (a == '\0') {
+                    break;
+                }
+                R[0]++;
+                R[1]++;
+            }
             break;
         case TSTW:
             a = cpu_read_op(src1);
@@ -3135,7 +3408,9 @@ static uint32 cpu_read_op(operand * op)
             data = sign_extend_b(R[op->reg] & BYTE_MASK);
             break;
         default:
-            assert(0);
+            stop_reason = STOP_ERR;
+            data = 0;
+            break;
         }
 
         op->data = data;
@@ -3197,7 +3472,7 @@ static uint32 cpu_read_op(operand * op)
         op->data = data;
         return data;
     default:
-        assert(0);
+        stop_reason = STOP_ERR;
         return 0;
     }
 }
@@ -3245,66 +3520,49 @@ static void cpu_write_op(operand * op, t_uint64 val)
         break;
     case HW:
     case UH:
-        if (val > HALF_MASK) {
-            cpu_set_v_flag(TRUE);
-        }
         write_h(eff, val & HALF_MASK);
         break;
     case SB:
     case BT:
-        if (val > BYTE_MASK) {
-            cpu_set_v_flag(TRUE);
-        }
         write_b(eff, val & BYTE_MASK);
         break;
     default:
-        assert(0);
+        stop_reason = STOP_ERR;
+        break;
     }
 }
 
 /*
- * This returns the current state of the IPL (Interrupt
- * Priority Level) bus. This is affected by:
- *
- *  - Latched values in the CSR for:
- *    o CSRCLK     15
- *    o CSRDMA     13
- *    o CSRUART    13
- *    o CSRDISK    11
- *    o CSRPIR9    9
- *    o CSRPIR8    8
- *  - IRQ currently enabled for:
- *    o HD Ctlr.   11
+ * Calculate the current state of interrupts.
+ * TODO: This could use a refactor. It's getting code-smelly.
  */
-static SIM_INLINE uint8 cpu_ipl()
+static void cpu_calc_ints()
 {
-    /* CSRPIR9 is cleared by writing to c_pir8 */
+    uint32 i;
+
+    /* First scan for a CIO interrupt */
+    for (i = 0; i < CIO_SLOTS; i++) {
+        if (cio[i].intr) {
+            cpu_int_ipl = cio[i].ipl;
+            cpu_int_vec = cio[i].ivec;
+            return;
+        }
+    }
+
+    /* If none was found, look for system board interrupts */
     if (csr_data & CSRPIR8) {
-        return 8;
+        cpu_int_ipl = cpu_int_vec = CPU_PIR8_IPL;
+    } else if (csr_data & CSRPIR9) {
+        cpu_int_ipl = cpu_int_vec = CPU_PIR9_IPL;
+    } else if (id_int() || (csr_data & CSRDISK)) {
+        cpu_int_ipl = cpu_int_vec = CPU_ID_IF_IPL;
+    } else if ((csr_data & CSRUART) || (csr_data & CSRDMA)) {
+        cpu_int_ipl = cpu_int_vec = CPU_IU_DMA_IPL;
+    } else if ((csr_data & CSRCLK) || (csr_data & CSRTIMO)) {
+        cpu_int_ipl = cpu_int_vec = CPU_TMR_IPL;
+    } else {
+        cpu_int_ipl = cpu_int_vec = 0;
     }
-
-    /* CSRPIR9 is cleared by writing to c_pir9 */
-    if (csr_data & CSRPIR9) {
-        return 9;
-    }
-
-    /* CSRDISK is cleared when the floppy "if_irq" goes low */
-    if (id_int() || (csr_data & CSRDISK)) {
-        return 11;
-    }
-
-    /* CSRDMA is cleared by write/read to 0x49011 */
-    /* CSRUART is cleared when the uart "iu_irq" goes low */
-    if ((csr_data & CSRUART) || (csr_data & CSRDMA)) {
-        return 13;
-    }
-
-    /* CSRCLK is cleared by $clrclkint */
-    if (csr_data & CSRCLK) {
-        return 15;
-    }
-
-    return 0;
 }
 
 /*
@@ -3323,43 +3581,6 @@ static SIM_INLINE t_bool op_signed(operand *op) {
     return (op_type(op) == WD || op_type(op) == HW || op_type(op) == SB);
 }
 
-static SIM_INLINE t_bool is_byte_immediate(operand * oper)
-{
-    return oper->mode == 6 && oper->reg == 15;
-}
-
-static SIM_INLINE t_bool is_halfword_immediate(operand * oper)
-{
-    return oper->mode == 5 && oper->reg == 15;
-}
-
-static SIM_INLINE t_bool is_word_immediate(operand * oper)
-{
-    return oper->mode == 4 && oper->reg == 15;
-}
-
-static SIM_INLINE t_bool is_positive_literal(operand * oper)
-{
-    return (oper->mode == 0 ||
-            oper->mode == 1 ||
-            oper->mode == 2);
-}
-
-static SIM_INLINE t_bool is_negative_literal(operand * oper)
-{
-    return oper->mode == 15;
-}
-
-/* Returns true if the operand may not be used as a destination */
-static SIM_INLINE t_bool invalid_destination(operand * oper)
-{
-    return (is_byte_immediate(oper) ||
-            is_halfword_immediate(oper) ||
-            is_word_immediate(oper) ||
-            is_positive_literal(oper) ||
-            is_negative_literal(oper));
-}
-
 static SIM_INLINE uint32 sign_extend_b(uint8 val)
 {
     if (val & 0x80)
@@ -3367,21 +3588,11 @@ static SIM_INLINE uint32 sign_extend_b(uint8 val)
     return (uint32) val;
 }
 
-static SIM_INLINE uint32 zero_extend_b(uint8 val)
-{
-    return (uint32) val & BYTE_MASK;
-}
-
 static SIM_INLINE uint32 sign_extend_h(uint16 val)
 {
     if (val & 0x8000)
         return ((uint32) val) | 0xffff0000;
     return (uint32) val;
-}
-
-static SIM_INLINE uint32 zero_extend_h(uint16 val)
-{
-    return (uint32) val & HALF_MASK;
 }
 
 /*
@@ -3526,11 +3737,6 @@ static SIM_INLINE t_bool op_is_psw(operand *op)
     return (op->mode == 4 && op->reg == NUM_PSW);
 }
 
-static SIM_INLINE t_bool op_is_sp(operand *op)
-{
-    return op->reg == NUM_SP;
-}
-
 static SIM_INLINE void sub(t_uint64 a, t_uint64 b, operand *dst)
 {
     t_uint64 result;
@@ -3556,19 +3762,29 @@ static SIM_INLINE void add(t_uint64 a, t_uint64 b, operand *dst)
 
     switch(op_type(dst)) {
     case WD:
+        cpu_set_c_flag(result > WORD_MASK);
+        cpu_set_v_flag(((a ^ ~b) & (a ^ result)) & WD_MSB);
+        break;
     case UW:
         cpu_set_c_flag(result > WORD_MASK);
-        cpu_set_v_flag(!! (((a ^ ~b) & (a ^ result)) & WD_MSB));
+        cpu_set_v_flag(result > WORD_MASK);
         break;
     case HW:
-    case UH:
         cpu_set_c_flag(result > HALF_MASK);
         cpu_set_v_flag(((a ^ ~b) & (a ^ result)) & HW_MSB);
         break;
+    case UH:
+        cpu_set_c_flag(result > HALF_MASK);
+        cpu_set_v_flag(result > HALF_MASK);
+        break;
     case BT:
+        cpu_set_c_flag(result > BYTE_MASK);
+        cpu_set_v_flag(result > BYTE_MASK);
+        break;
     case SB:
         cpu_set_c_flag(result > BYTE_MASK);
         cpu_set_v_flag(((a ^ ~b) & (a ^ result)) & BT_MSB);
+        break;
     }
 }
 
@@ -3579,20 +3795,19 @@ static SIM_INLINE void add(t_uint64 a, t_uint64 b, operand *dst)
 void cpu_abort(uint8 et, uint8 isc)
 {
     /* We don't trap Integer Overflow if the OE bit is not set */
-    if ((R[NUM_PSW] & PSW_OE_MASK) || isc != INTEGER_OVERFLOW) {
-        R[NUM_PSW] &= ~(PSW_ET_MASK);  /* Clear ET  */
-        R[NUM_PSW] &= ~(PSW_ISC_MASK); /* Clear ISC */
-        R[NUM_PSW] |= et;                         /* Set ET    */
-        R[NUM_PSW] |= (uint32) (isc << PSW_ISC);  /* Set ISC   */
-
-        /* TODO: We no longer use ABORT_TRAP or ABORT_EXC, so
-         * it would be nice to clean this up. */
-        if (et == 3 && (isc == BREAKPOINT_TRAP ||
-                        isc == INTEGER_OVERFLOW ||
-                        isc == TRACE_TRAP)) {
-            longjmp(save_env, ABORT_TRAP);
-        } else {
-            longjmp(save_env, ABORT_EXC);
-        }
+    if ((R[NUM_PSW] & PSW_OE_MASK) == 0 && isc == INTEGER_OVERFLOW) {
+        return;
     }
+
+    R[NUM_PSW] &= ~(PSW_ET_MASK);  /* Clear ET  */
+    R[NUM_PSW] &= ~(PSW_ISC_MASK); /* Clear ISC */
+    R[NUM_PSW] |= et;                         /* Set ET    */
+    R[NUM_PSW] |= (uint32) (isc << PSW_ISC);  /* Set ISC   */
+
+    longjmp(save_env, ABORT_EXC);
+}
+
+CONST char *cpu_description(DEVICE *dptr)
+{
+    return "WE32100";
 }

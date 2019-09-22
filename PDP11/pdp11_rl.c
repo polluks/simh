@@ -970,7 +970,7 @@ rl_set_done (0);
 
 if (err != 0) {                                         /* error? */
     sim_perror ("RL I/O error");
-    clearerr (uptr->fileref);
+    sim_disk_clearerr (uptr);
     return SCPE_IOERR;
     }
 return SCPE_OK;
@@ -1017,11 +1017,13 @@ t_stat rl_attach (UNIT *uptr, CONST char *cptr)
 {
 t_offset p;
 t_stat r;
+static const char *drives[] = {"RL01", "RL02", NULL};
 
 uptr->capac = (uptr->flags & UNIT_RL02)? RL02_SIZE: RL01_SIZE;
-r = sim_disk_attach (uptr, cptr, RL_NUMWD * sizeof (uint16), 
-                     sizeof (uint16), TRUE, 0, 
-                     (uptr->capac == RL02_SIZE) ? "RL02" : "RL01", RL_NUMSC, 0);
+r = sim_disk_attach_ex (uptr, cptr, RL_NUMWD * sizeof (uint16), 
+                        sizeof (uint16), TRUE, 0, 
+                        (uptr->capac == RL02_SIZE) ? "RL02" : "RL01", RL_NUMSC, 0,
+                        (uptr->flags & UNIT_AUTO) ? drives : NULL);
 if (r != SCPE_OK)                                       /* error? */
     return r;
 /*
@@ -1224,9 +1226,9 @@ t_stat rl_boot (int32 unitno, DEVICE *dptr)
 size_t i;
 
 for (i = 0; i < BOOT_LEN; i++)
-    M[(BOOT_START >> 1) + i] = boot_rom[i];
-M[BOOT_UNIT >> 1] = unitno & RLCS_M_DRIVE;
-M[BOOT_CSR >> 1] = rl_dib.ba & 0177777;
+    WrMemW (BOOT_START + (2 * i), boot_rom[i]);
+WrMemW (BOOT_UNIT, unitno & RLCS_M_DRIVE);
+WrMemW (BOOT_CSR, rl_dib.ba & 0177777);
 cpu_set_boot (BOOT_ENTRY);
 return SCPE_OK;
 }

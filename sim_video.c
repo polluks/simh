@@ -104,6 +104,7 @@ static char tmp_key_name[40];
  */
 #include <SDL.h>
 #include <png.h>
+#include <zlib.h>
 
 #define SUCCESS 0
 #define ERROR -1
@@ -361,13 +362,12 @@ t_bool vid_key_state[SDL_NUM_SCANCODES];
 SDL_Texture *vid_texture;                               /* video buffer in GPU */
 SDL_Renderer *vid_renderer;
 SDL_Window *vid_window;                                 /* window handle */
+SDL_PixelFormat *vid_format;
 uint32 vid_windowID;
 #endif
 SDL_Thread *vid_thread_handle = NULL;                   /* event thread handle */
 SDL_Cursor *vid_cursor = NULL;                          /* current cursor */
 t_bool vid_cursor_visible = FALSE;                      /* cursor visibility state */
-uint32 vid_mono_palette[2];                             /* Monochrome Color Map */
-SDL_Color vid_colors[256];
 KEY_EVENT_QUEUE vid_key_events;                         /* keyboard events */
 MOUSE_EVENT_QUEUE vid_mouse_events;                     /* mouse events */
 DEVICE *vid_dev;
@@ -406,16 +406,21 @@ main_argv = argv;
 
 #if SDL_MAJOR_VERSION == 1
 _XInitThreads();
-SDL_Init (SDL_INIT_VIDEO|SDL_INIT_NOPARACHUTE);
+status = SDL_Init (SDL_INIT_VIDEO|SDL_INIT_NOPARACHUTE);
 
 vid_main_thread_handle = SDL_CreateThread (main_thread , NULL);
 #else
 SDL_SetHint (SDL_HINT_RENDER_DRIVER, "software");
 
-SDL_Init (SDL_INIT_VIDEO);
+status = SDL_Init (SDL_INIT_VIDEO);
 
 vid_main_thread_handle = SDL_CreateThread (main_thread , "simh-main", NULL);
 #endif
+
+if (status) {
+    fprintf (stderr, "SDL Video subsystem can't initialize\n");
+    exit (1);
+    }
 
 sim_os_set_thread_priority (PRIORITY_ABOVE_NORMAL);
 
@@ -558,11 +563,11 @@ if (vid_active) {
 
         while (SDL_PushEvent (&user_event) < 0)
             sim_os_ms_sleep (10);
-        if (vid_thread_handle) {
-            SDL_WaitThread (vid_thread_handle, &status);
-            vid_thread_handle = NULL;
-            }
         vid_dev = NULL;
+        }
+    if (vid_thread_handle) {
+        SDL_WaitThread (vid_thread_handle, &status);
+        vid_thread_handle = NULL;
         }
     while (vid_ready)
         sim_os_ms_sleep (10);
@@ -624,6 +629,15 @@ if (SDL_SemTryWait (vid_mouse_events.sem) == 0) {
         sim_printf ("%s: vid_poll_mouse(): SDL_SemPost error: %s\n", sim_dname(vid_dev), SDL_GetError());
     }
 return stat;
+}
+
+uint32 vid_map_rgb (uint8 r, uint8 g, uint8 b)
+{
+#if SDL_MAJOR_VERSION == 1
+return SDL_MapRGB (vid_image->format, r, g, b);
+#else
+return SDL_MapRGB (vid_format, r, g, b);
+#endif
 }
 
 void vid_draw (int32 x, int32 y, int32 w, int32 h, uint32 *buf)
@@ -1599,9 +1613,6 @@ if (!initialized) {
 
 sim_debug (SIM_VID_DBG_VIDEO|SIM_VID_DBG_KEY|SIM_VID_DBG_MOUSE, vid_dev, "vid_thread() - Starting\n");
 
-vid_mono_palette[0] = sim_end ? 0xFF000000 : 0x000000FF;        /* Black */
-vid_mono_palette[1] = 0xFFFFFFFF;                               /* White */
-
 memset (&vid_key_state, 0, sizeof(vid_key_state));
 
 #if SDL_MAJOR_VERSION == 1
@@ -1641,6 +1652,8 @@ if (!vid_texture) {
     return 0;
     }
 
+vid_format = SDL_AllocFormat (SDL_PIXELFORMAT_ARGB8888);
+
 SDL_StopTextInput ();
 
 vid_windowID = SDL_GetWindowID (vid_window);
@@ -1651,9 +1664,9 @@ if (vid_flags & SIM_VID_INPUTCAPTURED) {
     char title[150];
 
     memset (title, 0, sizeof(title));
-    strncpy (title, vid_title, sizeof(title)-1);
-    strncat (title, "                                             ReleaseKey=", sizeof(title)-(1+strlen(title)));
-    strncat (title, vid_release_key, sizeof(title)-(1+strlen(title)));
+    strlcpy (title, vid_title, sizeof(title));
+    strlcat (title, "                                             ReleaseKey=", sizeof(title));
+    strlcat (title, vid_release_key, sizeof(title));
 #if SDL_MAJOR_VERSION == 1
     SDL_WM_SetCaption (title, title);
 #else
@@ -1800,14 +1813,20 @@ return 0;
 
 int vid_thread (void *arg)
 {
+int stat;
+
 #if SDL_MAJOR_VERSION == 1
 _XInitThreads();
-SDL_Init (SDL_INIT_VIDEO|SDL_INIT_NOPARACHUTE);
+stat = SDL_Init (SDL_INIT_VIDEO|SDL_INIT_NOPARACHUTE);
 #else
 SDL_SetHint (SDL_HINT_RENDER_DRIVER, "software");
 
-SDL_Init (SDL_INIT_VIDEO);
+stat = SDL_Init (SDL_INIT_VIDEO);
 #endif
+if (stat) {
+    sim_printf ("SDL Video subsystem can't initialize\n");
+    return 0;
+    }
 vid_beep_setup (400, 660);
 vid_video_events ();
 vid_beep_cleanup ();
@@ -1817,7 +1836,7 @@ return 0;
 
 const char *vid_version(void)
 {
-static char SDLVersion[80];
+static char SDLVersion[160];
 SDL_version compiled, running;
 
 #if SDL_MAJOR_VERSION == 1
@@ -1830,15 +1849,34 @@ SDL_GetVersion(&running);
 #endif
 SDL_VERSION(&compiled);
 
+SDLVersion[sizeof (SDLVersion) - 1] = '\0';
 if ((compiled.major == running.major) &&
     (compiled.minor == running.minor) &&
     (compiled.patch == running.patch))
-    sprintf(SDLVersion, "SDL Version %d.%d.%d", 
+    snprintf(SDLVersion, sizeof (SDLVersion) - 1, "SDL Version %d.%d.%d", 
                         compiled.major, compiled.minor, compiled.patch);
 else
-    sprintf(SDLVersion, "SDL Version (Compiled: %d.%d.%d, Runtime: %d.%d.%d)", 
+    snprintf(SDLVersion, sizeof (SDLVersion) - 1, "SDL Version (Compiled: %d.%d.%d, Runtime: %d.%d.%d)", 
                         compiled.major, compiled.minor, compiled.patch,
                         running.major, running.minor, running.patch);
+#if defined (HAVE_LIBPNG)
+if (1) {
+    png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+
+    if (strcmp (PNG_LIBPNG_VER_STRING, png_get_libpng_ver (png)))
+        snprintf(&SDLVersion[strlen (SDLVersion)], sizeof (SDLVersion) - (strlen (SDLVersion) + 1), 
+                            ", PNG Version (Compiled: %s, Runtime: %s)", 
+                            PNG_LIBPNG_VER_STRING, png_get_libpng_ver (png));
+    else
+        snprintf(&SDLVersion[strlen (SDLVersion)], sizeof (SDLVersion) - (strlen (SDLVersion) + 1), 
+                            ", PNG Version %s", PNG_LIBPNG_VER_STRING);
+    png_destroy_read_struct(&png, NULL, NULL);
+#if defined (HAVE_ZLIB)
+    snprintf(&SDLVersion[strlen (SDLVersion)], sizeof (SDLVersion) - (strlen (SDLVersion) + 1), 
+                        ", zlib: %s", zlibVersion());
+#endif
+    }
+#endif
 return (const char *)SDLVersion;
 }
 
@@ -1864,7 +1902,10 @@ fprintf (st, "  SDL Events being processed on the main process thread\n");
 #endif
 if (!vid_active) {
 #if !defined (SDL_MAIN_AVAILABLE)
-    SDL_Init(SDL_INIT_VIDEO);
+    int stat = SDL_Init(SDL_INIT_VIDEO);
+
+    if (stat)
+        return sim_messagef (SCPE_OPENERR, "SDL_Init() failed.  Video subsystem is unavailable.\n");
 #endif
     }
 else {
@@ -2138,7 +2179,7 @@ if (!vid_active) {
     return SCPE_UDIS | SCPE_NOMESSAGE;
     }
 fullname = (char *)malloc (strlen(filename) + 5);
-if (!filename)
+if (!fullname)
     return SCPE_MEM;
 #if SDL_MAJOR_VERSION == 1
 #if defined(HAVE_LIBPNG)
@@ -2303,8 +2344,6 @@ SDL_Delay (vid_beep_duration + 100);/* Wait for sound to finnish */
 #else /* !(defined(USE_SIM_VIDEO) && defined(HAVE_LIBSDL)) */
 /* Non-implemented versions */
 
-uint32 vid_mono_palette[2];                             /* Monochrome Color Map */
-
 t_stat vid_open (DEVICE *dptr, const char *title, uint32 width, uint32 height, int flags)
 {
 return SCPE_NOFNC;
@@ -2323,6 +2362,11 @@ return SCPE_EOF;
 t_stat vid_poll_mouse (SIM_MOUSE_EVENT *ev)
 {
 return SCPE_EOF;
+}
+
+uint32 vid_map_rgb (uint8 r, uint8 g, uint8 b)
+{
+return 0;
 }
 
 void vid_draw (int32 x, int32 y, int32 w, int32 h, uint32 *buf)

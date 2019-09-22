@@ -319,8 +319,8 @@ MTAB tu_mod[] = {
         NULL, NULL, NULL, "Set drive type to TU45" },
     { UNIT_TYPE, UNIT_TU77, "TU77", "TU77", 
         NULL, NULL, NULL, "Set drive type to TU77" },
-    { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0,       "FORMAT", "FORMAT",
-        &sim_tape_set_fmt, &sim_tape_show_fmt, NULL, "Set/Display tape format (SIMH, E11, TPC, P7B)" },
+    { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0, "FORMAT", "FORMAT",
+        &sim_tape_set_fmt, &sim_tape_show_fmt, NULL, "Set/Display tape format (SIMH, E11, TPC, P7B, AWS, TAR)" },
     { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0,       "CAPACITY", "CAPACITY",
         &sim_tape_set_capac, &sim_tape_show_capac, NULL, "Set unit n capacity to arg MB (0 = unlimited)" },
     { MTAB_XTD|MTAB_VUN|MTAB_NMO, 0,        "CAPACITY", NULL,
@@ -1054,9 +1054,9 @@ t_stat tu_boot (int32 unitno, DEVICE *dptr)
 size_t i;
 
 for (i = 0; i < BOOT_LEN; i++)
-    M[(BOOT_START >> 1) + i] = boot_rom[i];
-M[BOOT_UNIT >> 1] = unitno & (TU_NUMDR - 1);
-M[BOOT_CSR >> 1] = mba_get_csr (tu_dib.ba) & DMASK;
+    WrMemW (BOOT_START + (2 * i), boot_rom[i]);
+WrMemW (BOOT_UNIT, unitno & (TU_NUMDR - 1));
+WrMemW (BOOT_CSR, mba_get_csr (tu_dib.ba) & DMASK);
 cpu_set_boot (BOOT_ENTRY);
 return SCPE_OK;
 }

@@ -186,8 +186,6 @@ MTAB ta_mod[] = {
         NULL, NULL, NULL, "Write enable tape drive" },
     { MTUF_WLK, MTUF_WLK, "write locked",  "LOCKED", 
         NULL, NULL, NULL, "Write lock tape drive"  },
-//    { MTAB_XTD|MTAB_VUN, 0, "FORMAT", "FORMAT",
-//      &sim_tape_set_fmt, &sim_tape_show_fmt, NULL },
     { MTAB_XTD|MTAB_VUN, 0, "CAPACITY", NULL,
       NULL, &sim_tape_show_capac, NULL, "Display tape capacity" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 020, "ADDRESS", "ADDRESS",
@@ -661,8 +659,8 @@ t_stat ta_boot (int32 unitno, DEVICE *dptr)
 size_t i;
 
 for (i = 0; i < BOOT_LEN; i++)
-    M[(BOOT_START >> 1) + i] = boot_rom[i];
-M[BOOT_CSR >> 1] = ta_dib.ba & DMASK;
+    WrMemW (BOOT_START + (2 * i), boot_rom[i]);
+WrMemW (BOOT_CSR, ta_dib.ba & DMASK);
 cpu_set_boot (BOOT_ENTRY);
 return SCPE_OK;
 }

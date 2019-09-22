@@ -1231,7 +1231,7 @@ switch (fnc) {                                          /* case on function */
         if (err != 0) {                                 /* error? */
             hk_err (CS1_ERR|CS1_DONE, 0, ER_PAR, drv);  /* set drive error */
             sim_perror ("HK I/O error");
-            clearerr (uptr->fileref);
+            sim_disk_clearerr (uptr);
             return SCPE_IOERR;
             }
 
@@ -1497,11 +1497,13 @@ uint32 drv;
 t_offset p;
 t_stat r;
 int32 old_hkds;
+static const char *drives[] = {"RK06", "RK07", NULL};
 
 uptr->capac = HK_SIZE (uptr);
-r = sim_disk_attach (uptr, cptr, HK_NUMWD * sizeof (uint16), 
-                     sizeof (uint16), TRUE, 0, 
-                     (uptr->capac == RK06_SIZE) ? "RK06" : "RK07", HK_NUMSC, 0);
+r = sim_disk_attach_ex (uptr, cptr, HK_NUMWD * sizeof (uint16), 
+                        sizeof (uint16), TRUE, 0, 
+                        (uptr->capac == RK06_SIZE) ? "RK06" : "RK07", HK_NUMSC, 0,
+                        (uptr->flags & UNIT_AUTO) ? drives : NULL);
 if (r != SCPE_OK)                                       /* error? */
     return r;
 drv = (uint32) (uptr - hk_dev.units);                   /* get drv number */
@@ -1618,9 +1620,9 @@ t_stat hk_boot (int32 unitno, DEVICE *dptr)
 size_t i;
 
 for (i = 0; i < BOOT_LEN; i++)
-    M[(BOOT_START >> 1) + i] = boot_rom[i];
-M[BOOT_UNIT >> 1] = unitno & CS2_M_UNIT;
-M[BOOT_CSR >> 1] = hk_dib.ba & DMASK;
+    WrMemW (BOOT_START + (2 * i), boot_rom[i]);
+WrMemW (BOOT_UNIT, unitno & CS2_M_UNIT);
+WrMemW (BOOT_CSR, hk_dib.ba & DMASK);
 cpu_set_boot (BOOT_ENTRY);
 return SCPE_OK;
 }
