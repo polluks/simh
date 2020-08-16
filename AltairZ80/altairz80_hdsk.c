@@ -81,7 +81,7 @@ extern int32 bootrom_dsk[];
 extern t_stat set_iobase(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 extern t_stat show_iobase(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 extern uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
-        int32 (*routine)(const int32, const int32, const int32), uint8 unmap);
+                               int32 (*routine)(const int32, const int32, const int32), const char* name, uint8 unmap);
 extern int32 find_unit_index(UNIT *uptr);
 
 static t_stat hdsk_boot(int32 unitno, DEVICE *dptr);
@@ -190,7 +190,7 @@ static int32 mits[SPT32]                = { 0,  17, 2,  19, 4,  21, 6,  23,
 static DPB dpb[] = {
 /*      name    capac           spt     bsh     blm     exm     dsm     drm
         al0     al1     cks     off     psh     phm     ss      off skew                                                */
-    { "HDSK",   HDSK_CAPACITY,  32,     0x05,   0x1F,   0x01,   0x07f9, 0x03FF,
+    { "HDSK",   HDSK_CAPACITY,  32,     0x05,   0x1F,   0x01,   0x07F9, 0x03FF,
         0xFF,   0x00,   0x0000, 0x0006, 0x00,   0x00,   0,      0,  NULL },             /* AZ80 HDSK                    */
 
     { "CPM68K", (1 << 24),      (1<<17),0,      0,      0,      0,      0,
@@ -284,7 +284,7 @@ static DPB dpb[] = {
      dw     40              ;#128 byte records/track
      db     4,0fh           ;block shift mask (2K)
      db     1               ;extent  mask
-     dw     194             ;maximun  block number
+     dw     194             ;maximum  block number
      dw     127             ;max number of dir entry - 1
      db     0C0H,00h        ;alloc vector for directory
      dw     0020h           ;checksum size
@@ -373,10 +373,10 @@ DEVICE hdsk_dev = {
 static t_stat hdsk_reset(DEVICE *dptr)  {
     PNP_INFO *pnp = (PNP_INFO *)dptr -> ctxt;
     if (dptr -> flags & DEV_DIS) {
-        sim_map_resource(pnp -> io_base, pnp -> io_size, RESOURCE_TYPE_IO, &hdsk_io, TRUE);
+        sim_map_resource(pnp -> io_base, pnp -> io_size, RESOURCE_TYPE_IO, &hdsk_io, "hdsk_io", TRUE);
     } else {
         /* Connect HDSK at base address */
-        if (sim_map_resource(pnp -> io_base, pnp -> io_size, RESOURCE_TYPE_IO, &hdsk_io, FALSE) != 0) {
+        if (sim_map_resource(pnp -> io_base, pnp -> io_size, RESOURCE_TYPE_IO, &hdsk_io, "hdsk_io", FALSE) != 0) {
             sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp -> mem_base);
             dptr -> flags |= DEV_DIS;
             return SCPE_ARG;
@@ -449,8 +449,10 @@ static t_stat hdsk_attach(UNIT *uptr, CONST char *cptr) {
         hdsk_imd[thisUnitIndex] = diskOpenEx(uptr -> fileref,
                                              sim_deb && (hdsk_dev.dctrl & VERBOSE_MSG),
                                              &hdsk_dev, VERBOSE_MSG, VERBOSE_MSG);
-        if (hdsk_imd[thisUnitIndex] == NULL)
+        if (hdsk_imd[thisUnitIndex] == NULL) {
+            detach_unit(uptr);
             return SCPE_IOERR;
+        }
         verifyDiskInfo(hdsk_imd[thisUnitIndex], '0' + thisUnitIndex);
         uptr -> HDSK_NUMBER_OF_TRACKS = hdsk_imd[thisUnitIndex] -> ntracks;
         uptr -> HDSK_SECTORS_PER_TRACK = hdsk_imd[thisUnitIndex] -> track[1][0].nsects;
@@ -498,8 +500,7 @@ static t_stat hdsk_attach(UNIT *uptr, CONST char *cptr) {
             if (uptr -> HDSK_SECTOR_SIZE == 0)
                 uptr -> HDSK_SECTOR_SIZE = 128;
         }
-    }
-    else {  /* Case 2: disk parameter block found                                                       */
+    } else {  /* Case 2: disk parameter block found                                                       */
         uptr -> HDSK_SECTORS_PER_TRACK  = dpb[uptr -> HDSK_FORMAT_TYPE].spt >> dpb[uptr -> HDSK_FORMAT_TYPE].psh;
         uptr -> HDSK_SECTOR_SIZE        = (128 << dpb[uptr -> HDSK_FORMAT_TYPE].psh);
     }
@@ -927,8 +928,7 @@ int32 hdsk_write(void) {
                 return hdskStatus;
             }
         }
-    }
-    else {
+    } else {
         sim_debug(VERBOSE_MSG, &hdsk_dev, "HDSK%d: " ADDRESS_FORMAT
                   " Could not write to locked disk Sector=%06d Track=%04d.\n",
                   selectedDisk, PCX, selectedSector, selectedTrack);
@@ -993,8 +993,7 @@ static int32 hdsk_out(const int32 port, const int32 data) {
                 current = dpb[uptr -> HDSK_FORMAT_TYPE];
                 parameterBlock[17] = uptr -> HDSK_SECTOR_SIZE & 0xff;
                 parameterBlock[18] = (uptr -> HDSK_SECTOR_SIZE >> 8) & 0xff;
-            }
-            else {
+            } else {
                 current = dpb[0];
                 parameterBlock[17] = 128;
                 parameterBlock[18] = 0;

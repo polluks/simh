@@ -150,7 +150,7 @@ MTAB                cdr_mod[] = {
 };
 
 REG                 cdr_reg[] = {
-    {BRDATA(BUFF, cdr_buffer, 16, 16, sizeof(cdr_buffer)), REG_HRO},
+    {BRDATA(BUFF, cdr_buffer, 16, 16, sizeof(cdr_buffer)/sizeof(uint16)), REG_HRO},
     {0}
 };  
 
@@ -177,7 +177,7 @@ MTAB                cdp_mod[] = {
 };
 
 REG                 cdp_reg[] = {
-    {BRDATA(BUFF, cdp_buffer, 16, 16, sizeof(cdp_buffer)), REG_HRO},
+    {BRDATA(BUFF, cdp_buffer, 16, 16, sizeof(cdp_buffer)/sizeof(uint16)), REG_HRO},
     {0}
 };  
 
@@ -228,7 +228,7 @@ UNIT                con_unit[] = {
 };
 
 REG                 con_reg[] = {
-    {BRDATA(BUFF, con_data, 16, 8, sizeof(con_data)), REG_HRO},
+    {SAVEDATA(BUFF, con_data) },
     {0}
 };  
 
@@ -581,6 +581,7 @@ cdp_srv(UNIT *uptr) {
         } else {
             hol = 0;
             switch (ch & 077) {
+            case 000:  hol = 0x206; break;  /* ? */
             case 015:  hol = 0x082; break;  /* : */
             case 016:  hol = 0x20A; break;  /* > */
             case 017:  hol = 0x805; break;  /* } */
@@ -904,6 +905,7 @@ lpr_attach(UNIT * uptr, CONST char *file)
     t_stat              r;
     int                 u = (uptr - lpr_unit);
 
+    sim_switches |= SWMASK ('A');   /* Position to EOF */
     if ((r = attach_unit(uptr, file)) != SCPE_OK)
         return r;
     if ((sim_switches & SIM_SW_REST) == 0) {

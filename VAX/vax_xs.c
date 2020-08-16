@@ -88,7 +88,7 @@ REG xs_reg[] = {
     { GRDATA  ( SA4,    xs_var.mac[4],        16,  8, 0), REG_RO|REG_FIT },
     { GRDATA  ( SA5,    xs_var.mac[5],        16,  8, 0), REG_RO|REG_FIT },
     { FLDATA  ( INT,    xs_var.irq, 0) },
-    { BRDATA  ( SETUP,  &xs_var.setup,   DEV_RDX,  8, sizeof(xs_var.setup)), REG_HRO },
+    { SAVEDATA  ( SETUP,  xs_var.setup) },
     { GRDATA  ( CSR0,   xs_var.csr0,     DEV_RDX, 16, 0), REG_FIT },
     { GRDATA  ( CSR1,   xs_var.csr1,     DEV_RDX, 16, 0), REG_FIT },
     { GRDATA  ( CSR2,   xs_var.csr2,     DEV_RDX, 16, 0), REG_FIT },
@@ -304,7 +304,7 @@ void xs_process_receive(CTLR* xs)
 {
 uint8 b0, b1, b2, b3;
 uint32 segb, ba;
-int slen, wlen, off;
+int slen, wlen, off = 0;
 t_stat rstatus, wstatus;
 ETH_ITEM* item = 0;
 int no_buffers = xs->var->csr0 & CSR0_MISS;
@@ -458,6 +458,7 @@ t_stat rstatus, wstatus;
 
 /* sim_debug(DBG_TRC, xs->dev, "xs_process_transmit()\n"); */
 
+off = giant = runt = 0;
 for (;;) {
 
     /* get next transmit buffer */
@@ -734,8 +735,10 @@ if (tptr == NULL)
 strcpy(tptr, cptr);
 
 xs->var->etherface = (ETH_DEV *) malloc(sizeof(ETH_DEV));
-if (!xs->var->etherface)
+if (!xs->var->etherface) {
+    free(tptr);
     return SCPE_MEM;
+    }
 
 status = eth_open(xs->var->etherface, cptr, xs->dev, DBG_ETH);
 if (status != SCPE_OK) {

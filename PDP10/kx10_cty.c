@@ -1,6 +1,6 @@
-/* ka10_cty.c: KA-10 front end (console terminal) simulator
+/* kx10_cty.c: PDP6, KA-10 and KI-10 front end (console terminal) simulator
 
-   Copyright (c) 2013-2017, Richard Cornwell
+   Copyright (c) 2013-2020, Richard Cornwell
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -74,8 +74,13 @@ MTAB cty_mod[] = {
     { 0 }
     };
 
+REG cty_reg[] = {
+    { HRDATAD (WRU, sim_int_char, 8, "interrupt character") },
+    { 0 }
+    };
+
 DEVICE cty_dev = {
-    "CTY", cty_unit, NULL, cty_mod,
+    "CTY", cty_unit, cty_reg, cty_mod,
     2, 10, 31, 1, 8, 8,
     NULL, NULL, &cty_reset,
     NULL, NULL, NULL, &cty_dib, DEV_DEBUG, 0, dev_debug,
@@ -136,10 +141,10 @@ t_stat ctyo_svc (UNIT *uptr)
     int32   ch;
 
     if (uptr->DATA != 0) {
-    ch = sim_tt_outcvt ( uptr->DATA, TT_GET_MODE (uptr->flags)) ;
-    if ((r = sim_putchar_s (ch)) != SCPE_OK) {   /* output; error? */
-        sim_activate (uptr, uptr->wait);               /* try again */
-        return ((r == SCPE_STALL)? SCPE_OK: r);        /* !stall? report */
+        ch = sim_tt_outcvt ( uptr->DATA, TT_GET_MODE (uptr->flags)) ;
+        if ((r = sim_putchar_s (ch)) != SCPE_OK) {   /* output; error? */
+            sim_activate (uptr, uptr->wait);               /* try again */
+            return ((r == SCPE_STALL)? SCPE_OK: r);        /* !stall? report */
         }
     }
     uptr->STATUS &= ~TEL_BSY;
@@ -154,6 +159,8 @@ t_stat ctyi_svc (UNIT *uptr)
 
     sim_clock_coschedule (uptr, tmxr_poll);
                                                        /* continue poll */
+    if (uptr->STATUS & KEY_RDY)
+        return SCPE_OK;
     if ((ch = sim_poll_kbd ()) < SCPE_KFLAG)           /* no char or error? */
         return ch;
     if (ch & SCPE_BREAK)                               /* ignore break */
@@ -181,6 +188,11 @@ t_stat cty_reset (DEVICE *dptr)
 
 t_stat cty_stop_os (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
+#if ITS
+    if (cpu_unit[0].flags & UNIT_ITSPAGE)
+        M[037] = FMASK;
+    else
+#endif
     M[CTY_SWITCH] = 1;                                 /* tell OS to stop */
     return SCPE_OK;
 }
@@ -196,7 +208,13 @@ t_stat cty_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cpt
 {
 fprintf (st, "To stop the cpu use the command:\n\n");
 fprintf (st, "    sim> SET CTY STOP\n\n");
+#if ITS
+fprintf (st, "If the CPU is in standard mode, this will write 1 to location\n\n");
+fprintf (st, "%03o, causing TOPS10 to stop.  If the CPU is in ITS mode, this\n\n", CTY_SWITCH);
+fprintf (st, "will write -1 to location 037, causing ITS to stop.\n\n");
+#else
 fprintf (st, "This will write a 1 to location %03o, causing TOPS10 to stop\n\n", CTY_SWITCH);
+#endif
 fprintf (st, "The additional terminals can be set to one of four modes: UC, 7P, 7B, or 8B.\n\n");
 fprintf (st, "  mode  input characters        output characters\n\n");
 fprintf (st, "  UC    lower case converted    lower case converted to upper case,\n");
