@@ -346,7 +346,7 @@ DEVICE vc_dev = {
     1, DEV_RDX, 20, 1, DEV_RDX, 8,
     NULL, NULL, &vc_reset,
     NULL, NULL, &vc_detach,
-    &vc_dib, DEV_DIS | DEV_QBUS | DEV_DEBUG, 0,
+    &vc_dib, DEV_DIS | DEV_QBUS | DEV_DEBUG | DEV_DISPLAY, 0,
     vc_debug, NULL, NULL, &vc_help, NULL, NULL, 
     &vc_description
     };
@@ -1035,6 +1035,7 @@ if (!vid_active)  {
     vc_lines = (uint32 *) calloc (VC_XSIZE*VC_YSIZE, sizeof (uint32));
     if (vc_lines == NULL) {
         free (vc_buf);
+        vc_buf = NULL;
         vid_close ();
         return SCPE_MEM;
         }
@@ -1043,6 +1044,7 @@ if (!vid_active)  {
         free (vc_lines);
         vc_lines = NULL;
         free (vc_buf);
+        vc_buf = NULL;
         vid_close ();
         return SCPE_MEM;
         }

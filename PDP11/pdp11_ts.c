@@ -1,6 +1,6 @@
 /* pdp11_ts.c: TS11/TSV05 magnetic tape simulator
 
-   Copyright (c) 1993-2014, Robert M Supnik
+   Copyright (c) 1993-2022, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -25,6 +25,7 @@
 
    ts           TS11/TSV05 magtape
 
+   26-Mar-22    RMS     Added extra case points for new MTSE definitions
    27-Oct-14    RMS     Fixed bug in read forward with byte swap
    23-Oct-13    RMS     Revised for new boot setup routine
    19-Mar-12    RMS     Fixed declaration of cpu_opt (Mark Pizzolato)
@@ -346,10 +347,10 @@ REG ts_reg[] = {
     };
 
 MTAB ts_mod[] = {
-    { MTUF_WLK,         0, "write enabled",  "WRITEENABLED", 
-        NULL, NULL, NULL, "Write enable tape drive" },
-    { MTUF_WLK,  MTUF_WLK, "write locked",   "LOCKED", 
-        NULL, NULL, NULL, "Write lock tape drive"  },
+    { MTAB_XTD|MTAB_VUN, 0, "write enabled", "WRITEENABLED", 
+        &set_writelock, &show_writelock,   NULL, "Write ring in place" },
+    { MTAB_XTD|MTAB_VUN, 1, NULL, "LOCKED", 
+        &set_writelock, NULL,   NULL, "no Write ring in place" },
     { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0, "FORMAT", "FORMAT",
         &sim_tape_set_fmt, &sim_tape_show_fmt, NULL, "Set/Display tape format (SIMH, E11, TPC, P7B, AWS, TAR)" },
     { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0,       "CAPACITY", "CAPACITY",
@@ -484,6 +485,7 @@ switch (st) {
         msgxs0 = msgxs0 | XS0_MOT;                      /* tape has moved */
     case MTSE_INVRL:                                    /* invalid rec lnt */
     case MTSE_IOERR:                                    /* IO error */
+    default:                                            /* unknown error */
         msgxs1 = msgxs1 | XS1_UCOR;                     /* uncorrectable */
         return (XTC (XS0_RLS, TC6));                    /* pos lost */
 

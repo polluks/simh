@@ -68,8 +68,6 @@ MTAB daz_mod[] = {
     &set_addr, &show_addr, NULL, "Bus address" },
   { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0, "VECTOR",  "VECTOR",
     &set_vec, &show_vec, NULL, "Interrupt vector" },
-  { MTAB_XTD|MTAB_VDV, 0, NULL, "AUTOCONFIGURE",
-    &set_addr_flt, NULL, NULL, "Enable autoconfiguration of address & vector" },
   { 0 }  };
 
 DEVICE daz_dev = {
@@ -154,6 +152,10 @@ int daz_keyboard (SIM_KEY_EVENT *kev)
   case SIM_KEY_N: n = 3; mask = TURN_RIGHT; break;
   case SIM_KEY_M: n = 3; mask = FIRE; break;
   case SIM_KEY_COMMA: n = 3; mask = PASS; break;
+  case SIM_KEY_F11:
+    if (kev->state == SIM_KEYPRESS_UP)
+      vid_set_fullscreen (!vid_is_fullscreen ());
+    return 0;
   default: return 0;
   }
 
@@ -272,11 +274,11 @@ t_stat daz_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cpt
   fprintf(st, "ROTATE LEFT, ROTATE RIGHT, MOVE LEFT, MOVE RIGHT, MOVE UP, MOVE DOWN,\n");
   fprintf(st, "PASS, and FIRE.\n\n");
   fprintf(st, "The first set is mapped from the keys 1-8.  The second set is mapped from\n");
-  fprintf(st, "Q-I.  The first set is mapped from A-K.  The fourth set is mapped\n");
+  fprintf(st, "Q-I.  The third set is mapped from A-K.  The fourth set is mapped\n");
   fprintf(st, "from Z-, (comma).\n\n");
 
   fprintf(st, "The only software for the DAZ was the Dazzle Dart game by\n");
-  fprintf(st, "Hal Abelson, Andy diSessa, and Nat Goodman.  To play the game:\n\n\n");
+  fprintf(st, "Hal Abelson, Andy diSessa, and Nat Goodman.  To play the game:\n\n");
   fprintf(st, "   sim> set daz enable\n");
   fprintf(st, "   sim> boot daz\n\n");
 

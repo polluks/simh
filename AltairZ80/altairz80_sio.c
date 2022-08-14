@@ -54,7 +54,6 @@
 #include "altairz80_defs.h"
 #include "sim_sock.h"
 #include "sim_tmxr.h"
-#include <time.h>
 
 uint8 *URLContents(const char *URL, uint32 *length);
 #ifndef URL_READER_SUPPORT
@@ -139,6 +138,8 @@ static const char* sio_description(DEVICE *dptr);
 static const char* simh_description(DEVICE *dptr);
 static const char* ptr_description(DEVICE *dptr);
 static const char* ptp_description(DEVICE *dptr);
+static t_stat ptpptr_dev_set_port(UNIT *uptr, int32 value, CONST char *cptr, void *desc);
+static t_stat ptpptr_dev_show_port(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 static void mapAltairPorts(void);
 int32 nulldev   (const int32 port, const int32 io, const int32 data);
 int32 sr_dev    (const int32 port, const int32 io, const int32 data);
@@ -166,6 +167,8 @@ extern uint32 PCX;
 extern int32 SR;
 extern UNIT cpu_unit;
 extern const char* handlerNameForPort(const int32 port);
+extern uint32 vectorInterrupt;            /* Interrupt Request */
+extern uint8 dataBus[MAX_INT_VECTORS];    /* Data Bus Value    */
 
 /* Debug Flags */
 static DEBTAB generic_dt[] = {
@@ -219,6 +222,8 @@ static int32 versionPos             = 0;        /* determines state for sending 
 static int32 lastCPMStatus          = 0;        /* result of last attachCPM command                             */
 static int32 lastCommand            = 0;        /* most recent command processed on port 0xfeh                  */
 static int32 getCommonPos           = 0;        /* determines state for sending the 'common' register           */
+static int32 genInterruptPos        = 0;        /* determines state for receiving interrupt vector and data     */
+static int32 genInterruptVec        = 0;        /* stores interrupt vector                                      */
 
 /* CPU Clock Frequency related                                                                                  */
 static uint32 newClockFrequency;
@@ -289,6 +294,10 @@ static int32 warnUnassignedPort     = 0;        /* display a warning message if 
        int32 keyboardInterrupt = FALSE;         /* keyboard interrupt pending                                   */
        uint32 keyboardInterruptHandler = 0x0038;/* address of keyboard interrupt handler                        */
 
+/* PTR/PTP port assignments (read only)                                                                         */
+static int32 ptpptrStatusPort       = 0x12;     /* default status port for PTP/PTR device                       */
+static int32 ptpptrDataPort         = 0x13;     /* default data port for PTP/PTR device                         */
+
 static TMLN TerminalLines[TERMINALS] = {        /* four terminals   */
     { 0 }
 };
@@ -321,7 +330,7 @@ static REG sio_reg[] = {
                "BOOL to determine whether terminal input is attached to a file"), REG_RO    },
     /* TRUE iff terminal input is attached to a file    */
     { HRDATAD (TSTATUS,  sio_unit.u3,        8,
-               "BOOL to determine whethere a character is available")                       },
+               "BOOL to determine whether a character is available")                       },
     /* TRUE iff a character available in sio_unit.buf   */
     { DRDATAD (TBUFFER,  sio_unit.buf,       8,
                "Input buffer register")                                                     },
@@ -389,6 +398,9 @@ DEVICE sio_dev = {
 };
 
 static MTAB ptpptr_mod[] = {
+    { MTAB_XTD|MTAB_VDV, 0, "PORT", "PORT",
+        &ptpptr_dev_set_port, &ptpptr_dev_show_port, NULL,
+        "Set status and data port for PTP/PTR device" },
     { 0 }
 };
 
@@ -397,7 +409,9 @@ static UNIT ptr_unit = {
 };
 
 static REG ptr_reg[] = {
-    { HRDATAD (STAT, ptr_unit.u3, 8, "Status register")  },
+    { HRDATAD (PTRSTATUSPORT, ptpptrStatusPort, 8, "PTR status port (shared with PTP)"), REG_RO  },
+    { HRDATAD (PTRDATAPORT, ptpptrDataPort, 8, "PTR data port (shared with PTP)"), REG_RO  },
+    { HRDATAD (PTRSTATUS, ptr_unit.u3, 8, "PTR Status register")  },
     { NULL }
 };
 
@@ -418,12 +432,18 @@ static UNIT ptp_unit = {
     UDATA (NULL, UNIT_ATTABLE, 0)
 };
 
+static REG ptp_reg[] = {
+    { HRDATAD (PTPSTATUSPORT, ptpptrStatusPort, 8, "PTP status port (shared with PTR)"), REG_RO  },
+    { HRDATAD (PTPDATAPORT, ptpptrDataPort, 8, "PTP data port (shared with PTR)"), REG_RO  },
+    { NULL }
+};
+
 static const char* ptp_description(DEVICE *dptr) {
     return "Paper Tape Puncher";
 }
 
 DEVICE ptp_dev = {
-    "PTP", &ptp_unit, NULL, ptpptr_mod,
+    "PTP", &ptp_unit, ptp_reg, ptpptr_mod,
     1, 10, 31, 1, 8, 8,
     NULL, NULL, &ptp_reset,
     NULL, NULL, NULL,
@@ -635,6 +655,8 @@ static SIO_PORT_INFO port_table[PORT_TABLE_SIZE] = {
     {0x01, 0, 0,                0,      0, FALSE, 0, FALSE, TRUE                        },
     {0x02, 0, VGSIO_CAN_READ,   0,      VGSIO_CAN_WRITE, FALSE, 0, TRUE, TRUE           },
     {0x03, 0, VGSIO_CAN_READ,   0,      VGSIO_CAN_WRITE, FALSE, 0, FALSE, TRUE          },
+    {0x04, 0, VGSIO_CAN_READ,   0,      VGSIO_CAN_WRITE, FALSE, 0, TRUE, TRUE           },
+    {0x05, 0, VGSIO_CAN_READ,   0,      VGSIO_CAN_WRITE, FALSE, 0, FALSE, TRUE          },
     {0x10, 0, SIO_CAN_READ,     0,      SIO_CAN_WRITE, TRUE, SIO_RESET, FALSE, TRUE     },
     {0x11, 0, SIO_CAN_READ,     0,      SIO_CAN_WRITE, TRUE, SIO_RESET, TRUE, TRUE      },
     {0x14, 1, SIO_CAN_READ,     0,      SIO_CAN_WRITE, TRUE, SIO_RESET, FALSE, TRUE     },
@@ -993,6 +1015,33 @@ static uint32 equalSIP(SIO_PORT_INFO x, SIO_PORT_INFO y) {
     (x.sio_reset == y.sio_reset) && (x.hasOUT == y.hasOUT);
 }
 
+static t_stat ptpptr_dev_set_port(UNIT *uptr, int32 value, CONST char *cptr, void *desc) {
+    int32 result, n, statusPort, dataPort;
+    if (cptr == NULL)
+        return SCPE_ARG;
+    result = sscanf(cptr, "%x/%x%n", &statusPort, &dataPort, &n);
+    if ((result != 2) || (result == EOF) || (cptr[n] != 0))
+        return SCPE_ARG;
+    if (statusPort != (statusPort & 0xff)) {
+        sim_printf("Truncating status port 0x%x to 0x%02x.\n", statusPort, statusPort & 0xff);
+        statusPort &= 0xff;
+    }
+    if (dataPort != (dataPort & 0xff)) {
+        sim_printf("Truncating data port 0x%x to 0x%02x.\n", dataPort, dataPort & 0xff);
+        dataPort &= 0xff;
+    }
+    sim_map_resource(statusPort, 1, RESOURCE_TYPE_IO, &sio1s, "sio1s", ptp_dev.flags & ptr_dev.flags & DEV_DIS);
+    ptpptrStatusPort = statusPort;
+    sim_map_resource(dataPort, 1, RESOURCE_TYPE_IO, &sio1d, "sio1d", ptp_dev.flags & ptr_dev.flags & DEV_DIS);
+    ptpptrDataPort = dataPort;
+    return SCPE_OK;
+}
+
+static t_stat ptpptr_dev_show_port(FILE *st, UNIT *uptr, int32 val, CONST void *desc) {
+    fprintf(st, "\n\tStatus port = 0x%02x\n\t  Data port = 0x%02x\n", ptpptrStatusPort, ptpptrDataPort);
+    return SCPE_OK;
+}
+
 static t_stat sio_dev_set_port(UNIT *uptr, int32 value, CONST char *cptr, void *desc) {
     int32 result, n, position, isDataPort;
     SIO_PORT_INFO sip = { 0 }, old;
@@ -1208,6 +1257,7 @@ enum simhPseudoDeviceCommands { /* do not change order or remove commands, add o
     readURLCmd,                 /* 30 read the contents of an URL                                       */
     getCPUClockFrequency,       /* 31 get the clock frequency of the CPU                                */
     setCPUClockFrequency,       /* 32 set the clock frequency of the CPU                                */
+    genInterruptCmd,            /* 33 generate interrupt                                                */
     kSimhPseudoDeviceCommands
 };
 
@@ -1245,6 +1295,7 @@ static const char *cmdNames[kSimhPseudoDeviceCommands] = {
     "readURL",
     "getCPUClockFrequency",
     "setCPUClockFrequency",
+    "genInterrupt",
 };
 
 #define TIMER_STACK_LIMIT          10       /* stack depth of timer stack   */
@@ -1366,7 +1417,7 @@ static void setClockZSDOS(void) {
     newTime.tm_min  = fromBCD(GetBYTEWrapper(setClockZSDOSAdr + 4));
     newTime.tm_sec  = fromBCD(GetBYTEWrapper(setClockZSDOSAdr + 5));
     newTime.tm_isdst = 0;
-    ClockZSDOSDelta = (int32)(mktime(&newTime) - time(NULL));
+    ClockZSDOSDelta = (int32)(mktime(&newTime) - sim_get_time(NULL));
 }
 
 #define SECONDS_PER_MINUTE  60
@@ -1401,7 +1452,7 @@ static void setClockCPM3(void) {
     targetDate.tm_hour = fromBCD(GetBYTEWrapper(setClockCPM3Adr + 2));
     targetDate.tm_min = fromBCD(GetBYTEWrapper(setClockCPM3Adr + 3));
     targetDate.tm_sec = fromBCD(GetBYTEWrapper(setClockCPM3Adr + 4));
-    ClockCPM3Delta = (int32)(mktime(&targetDate) - time(NULL));
+    ClockCPM3Delta = (int32)(mktime(&targetDate) - sim_get_time(NULL));
 }
 
 static int32 simh_in(const int32 port) {
@@ -1591,7 +1642,9 @@ void do_SIMH_sleep(void) {
      Otherwise there is the possibility that such interrupts are skipped. */
     if ((simh_unit.flags & UNIT_SIMH_TIMERON) && rtc_avail && (sim_os_msec() + 1 >= timeOfNextInterrupt))
         return;
-    if (SIMHSleep && !sio_unit.u4)  /* time to sleep and SIO not attached to a file */
+    if (SIMHSleep && !sio_unit.u4)
+        /* time to sleep and SIO not attached to a file.
+         Use 'D SLEEP 0' to disable this functionality when not needed. */
         sim_os_ms_sleep(SIMHSleep);
 }
 
@@ -1685,6 +1738,19 @@ static int32 simh_out(const int32 port, const int32 data) {
             }
             break;
 
+        case genInterruptCmd:
+            if (genInterruptPos == 0) {
+                genInterruptVec = data;
+                genInterruptPos = 1;
+		sim_printf("genInterruptVec=%d genInterruptPos=%d\n", genInterruptVec, genInterruptPos);
+            } else {
+                vectorInterrupt |= (1 << genInterruptVec);
+                dataBus[genInterruptVec] = data;
+                genInterruptPos = lastCommand = 0;
+		sim_printf("genInterruptVec=%d vectorInterrupt=%X dataBus=%02X genInterruptPos=%d\n", genInterruptVec, vectorInterrupt, data, genInterruptPos);
+            }
+            break;
+
         default: /* lastCommand not yet set */
             sim_debug(CMD_MSG, &simh_device, "SIMH: " ADDRESS_FORMAT
                       " CMD(0x%02x) <- %i (0x%02x, '%s')\n",
@@ -1774,7 +1840,7 @@ static int32 simh_out(const int32 port, const int32 data) {
                     break;
 
                 case getClockZSDOSCmd:
-                    time(&now);
+                    sim_get_time(&now);
                     now += ClockZSDOSDelta;
                     currentTime = *localtime(&now);
                     currentTimeValid = TRUE;
@@ -1786,7 +1852,7 @@ static int32 simh_out(const int32 port, const int32 data) {
                     break;
 
                 case getClockCPM3Cmd:
-                    time(&now);
+                    sim_get_time(&now);
                     now += ClockCPM3Delta;
                     currentTime = *localtime(&now);
                     currentTimeValid = TRUE;

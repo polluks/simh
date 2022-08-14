@@ -742,11 +742,15 @@ t_stat xq_show_filters (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
   CTLR* xq = xq_unit2ctlr(uptr);
   char  buffer[20];
-  size_t i;
+  int i;
 
   if (xq->var->mode == XQ_T_DELQA_PLUS) {
     eth_mac_fmt(&xq->var->init.phys, buffer);
     fprintf(st, "Physical Address=%s\n", buffer);
+    for (i=1; i<xq->var->etherface->addr_count; i++) {
+      eth_mac_fmt((ETH_MAC*)xq->var->etherface->filter_address[i], buffer);
+      fprintf(st, "Additional Filter:[%2d]: %s\n", (int)i, buffer);
+    }
     if (xq->var->etherface->hash_filter) {
       fprintf(st, "Multicast Hash: ");
       for (i=0; i<sizeof(xq->var->etherface->hash); ++i)
@@ -1313,7 +1317,7 @@ t_stat xq_process_mop(CTLR* xq)
     return SCPE_NOFNC;
 
   while ((meb->type != 0) && (meb < limit)) {
-    address = (meb->add_hi << 16) || (meb->add_mi << 8) || meb->add_lo;
+    address = (meb->add_hi << 16) | (meb->add_mi << 8) | meb->add_lo;
 
     /* MOP stuff here - NOT YET FULLY IMPLEMENTED */
     sim_debug (DBG_WRN, xq->dev, "Processing MEB type: %d\n", meb->type);
@@ -1936,7 +1940,9 @@ t_stat xq_process_turbo_xbdl(CTLR* xq)
       xq->var->xring[i].tmd2 = XQ_TMD2_RON | XQ_TMD2_TON;
     }
 
-    Map_ReadW (tdra+(uint32)(((char *)(&xq->var->xring[xq->var->tbindx].tmd3))-((char *)&xq->var->xring)), sizeof(xq->var->xring[xq->var->tbindx].tmd3), (uint16 *)&xq->var->xring[xq->var->tbindx].tmd3);
+    status = Map_ReadW (tdra+(uint32)(((char *)(&xq->var->xring[xq->var->tbindx].tmd3))-((char *)&xq->var->xring)), sizeof(xq->var->xring[xq->var->tbindx].tmd3), (uint16 *)&xq->var->xring[xq->var->tbindx].tmd3);
+    if (status != SCPE_OK)
+      return xq_nxm_error(xq);
     if (xq->var->xring[xq->var->tbindx].tmd3 & XQ_TMD3_OWN)
       xq->var->xring[i].tmd2 |= XQ_TMD2_EOR;
 
@@ -2020,7 +2026,7 @@ t_stat xq_process_loopback(CTLR* xq, ETH_PACK* pack)
   ++xq->var->stats.loop;
 
   if (DBG_PCK & xq->dev->dctrl)
-      eth_packet_trace_ex(xq->var->etherface, response.msg, response.len, ((function == 1) ? "xq-loopbackreply" : "xq-loopbackforward"), DBG_DAT & xq->dev->dctrl, DBG_PCK);
+      eth_packet_trace_ex(xq->var->etherface, response.msg, response.len, "xq-loopbackforward", DBG_DAT & xq->dev->dctrl, DBG_PCK);
 
   return status;
 }
@@ -2403,8 +2409,7 @@ t_stat xq_wr_srqr_action(CTLR* xq)
           xq->var->sanity.quarter_secs = 4*xq->var->init.hit_timeout;
         }
         xq->var->icr = xq->var->init.options & XQ_IN_OP_INT;
-        status = eth_filter_hash (xq->var->etherface, 1, &xq->var->init.phys, 0, xq->var->init.mode & XQ_IN_MO_PRO, &xq->var->init.hash_filter);
-
+        status = eth_filter_hash_ex (xq->var->etherface, 1, &xq->var->init.phys, 0, xq->var->init.mode & XQ_IN_MO_PRO, TRUE, &xq->var->init.hash_filter);
         xq->dev->dctrl = saved_debug; /* restore original debugging */
       }
       /* start the read service timer or enable asynch reading as appropriate */
@@ -2925,8 +2930,9 @@ t_stat xq_attach(UNIT* uptr, CONST char* cptr)
     return status;
     }
 
-  if (xq->var->mode == XQ_T_DELQA_PLUS)
-    eth_filter_hash (xq->var->etherface, 1, &xq->var->init.phys, 0, xq->var->init.mode & XQ_IN_MO_PRO, &xq->var->init.hash_filter);
+  if (xq->var->mode == XQ_T_DELQA_PLUS) {
+    eth_filter_hash_ex (xq->var->etherface, 1, &xq->var->init.phys, 0, xq->var->init.mode & XQ_IN_MO_PRO, TRUE, &xq->var->init.hash_filter);
+    }
   else
     if (xq->var->setup.valid) {
       int i, count = 0;
@@ -3147,7 +3153,6 @@ t_stat xq_boot (int32 unitno, DEVICE *dptr)
 {
 #ifdef VM_PDP11
 size_t i;
-DIB *dib = (DIB *)dptr->ctxt;
 extern int32 REGFILE[6][2];                 /* R0-R5, two sets */
 
 for (i = 0; i < BOOT_LEN; i++)
@@ -3180,7 +3185,7 @@ const char helpString[] =
     " data link layer functions, and part of the physical layer functions.\n"
     "2 Models\n"
     "3 DEQNA\n"
-    " A M7504 Qbus Module.  The DELQA module is a dual-height module which\n"
+    " A M7504 Qbus Module.  The DEQNA module is a dual-height module which\n"
     " plugs directly into the Qbus backplane.\n"
     "3 DELQA\n"
     " A M7516 Qbus Module.  The DELQA module is a dual-height module which\n"
@@ -3373,9 +3378,10 @@ const char helpString[] =
      /****************************************************************************/
     "1 Dependencies\n"
 #if defined(_WIN32)
-    " The WinPcap package must be installed in order to enable\n"
+    " The NPcap or WinPcap package must be installed in order to enable\n"
     " communication with other computers on the local LAN.\n"
     "\n"
+    " The NPcap package is available from https://github.com/nmap/npcap\n"
     " The WinPcap package is available from http://www.winpcap.org/\n"
 #else
     " To build simulators with the ability to communicate to other computers\n"
@@ -3395,6 +3401,8 @@ const char helpString[] =
     " network interface without any special privileges as long as the\n"
     " WinPcap package has been previously installed on the host system.\n"
 #else
+    " Linux, MacOS and most other Unix like systems require root privilege\n"
+    " to access network interfaces on the host system.\n"
 #endif
     "1 Host Computer Communications\n"
 #if defined(_WIN32)
@@ -3421,6 +3429,9 @@ const char helpString[] =
     " The other simulated Ethernet devices include:\n"
     "\n"
     "++DEUNA/DELUA  Unibus PDP11 and VAX simulators\n"
+    "++XS           VAX simulators\n"
+    "++NI           AT&T 3b2 simulator\n"
+    "++NIA-20       KL10 simulator\n"
     "\n"
     ;
 return scp_help (st, dptr, uptr, flag, helpString, cptr);

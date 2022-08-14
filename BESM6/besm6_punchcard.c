@@ -28,17 +28,6 @@
  */
 #include "besm6_defs.h"
 
-#if 0
-/*
- * Punchcard input not yet implemented.
- */
-t_stat uvvk_event (UNIT *u);    /* punched card reader */
-UNIT uvvk_unit [] = {
-    { UDATA (uvvk_event, UNIT_SEQ+UNIT_ATTABLE, 0) },
-    { UDATA (uvvk_event, UNIT_SEQ+UNIT_ATTABLE, 0) },
-};
-#endif
-
 t_stat pi_event (UNIT *u);      /* punched card writer */
 UNIT pi_unit [] = {
     { UDATA (pi_event, UNIT_SEQ+UNIT_ATTABLE, 0) },
@@ -366,7 +355,7 @@ void pi_control (int num, uint32 cmd)
     cmd &= 011;
     if (! IS_RDY2(pi_ready_mask[num])) {
         if (pi_dev.dctrl)
-            besm6_debug("<<< PI-%d not ready", num, cmd);
+            besm6_debug("<<< PI-%d not ready", num);
         return;
     }
     switch (cmd) {

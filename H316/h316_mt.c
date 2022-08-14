@@ -1,6 +1,6 @@
 /* h316_mt.c: H316/516 magnetic tape simulator
 
-   Copyright (c) 2003-2012, Robert M. Supnik
+   Copyright (c) 2003-2022, Robert M. Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -25,6 +25,7 @@
 
    mt           516-4100 seven track magnetic tape
 
+   26-Mar-22    RMS     Added extra case points for new MTSE definitions
    03-Jul-13    RLA     compatibility changes for extended interrupts
    19-Mar-12    RMS     Fixed declaration of chan_req (Mark Pizzolato)
    09-Jun-07    RMS     Fixed bug in write without stop (Theo Engel)
@@ -155,8 +156,10 @@ REG mt_reg[] = {
     };
 
 MTAB mt_mod[] = {
-    { MTUF_WLK, 0, "write enabled", "WRITEENABLED", NULL },
-    { MTUF_WLK, MTUF_WLK, "write locked", "LOCKED", NULL }, 
+    { MTAB_XTD|MTAB_VUN, 0, "write enabled", "WRITEENABLED", 
+        &set_writelock, &show_writelock,   NULL, "Write ring in place" },
+    { MTAB_XTD|MTAB_VUN, 1, NULL, "LOCKED", 
+        &set_writelock, NULL,   NULL, "no Write ring in place" },
     { MTAB_XTD|MTAB_VUN, 0, "FORMAT", "FORMAT",
       &sim_tape_set_fmt, &sim_tape_show_fmt, NULL },
     { MTAB_XTD|MTAB_VUN, 0, "CAPACITY", "CAPACITY",
@@ -519,6 +522,7 @@ switch (st) {
 
     case MTSE_FMT:                                      /* illegal fmt */
     case MTSE_UNATT:                                    /* unattached */
+    default:                                            /* unknown error */
         mt_err = 1;                                     /* reject */
     case MTSE_OK:                                       /* no error */
         return SCPE_IERR;                               /* never get here! */

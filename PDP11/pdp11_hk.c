@@ -71,45 +71,30 @@ extern uint32 cpu_opt;
 #include "sim_disk.h"
 
 #define HK_NUMDR        8                               /* #drives */
-#define HK_NUMCY6       411                             /* cyl/drive */
-#define HK_NUMCY7       815                             /* cyl/drive */
+#define RK06_NUMCYL     411                             /* cyl/drive */
+#define RK07_NUMCYL     815                             /* cyl/drive */
 #define HK_NUMSF        3                               /* tracks/cyl */
 #define HK_NUMSC        22                              /* sectors/track */
 #define HK_NUMWD        256                             /* words/sector */
-#define RK06_SIZE       (HK_NUMCY6*HK_NUMSF*HK_NUMSC*HK_NUMWD)
-#define RK07_SIZE       (HK_NUMCY7*HK_NUMSF*HK_NUMSC*HK_NUMWD)
-#define HK_SIZE(x)      (((x)->flags & UNIT_DTYPE)? RK07_SIZE: RK06_SIZE)
-#define HK_CYL(x)       (((x)->flags & UNIT_DTYPE)? HK_NUMCY7: HK_NUMCY6)
+#define RK06_SIZE       (RK06_NUMCYL*HK_NUMSF*HK_NUMSC) /* sectors/drive */
+#define RK07_SIZE       (RK07_NUMCYL*HK_NUMSF*HK_NUMSC) /* sectors/drive */
+#define HK_SIZE(x)      ((x)->drvtyp->size)
+#define HK_CYL(x)       ((x)->drvtyp->cyl)
 #define HK_MAXFR        (1 << 16)
 
-struct drvtyp {
-    int32       sect;                                   /* sectors */
-    int32       surf;                                   /* surfaces */
-    int32       cyl;                                    /* cylinders */
-    int32       size;                                   /* #blocks */
-    const char  *name;                                  /* device type name */
-    };
+#define HK_DRV(d)           \
+    { HK_NUMSC, HK_NUMSF, d##_NUMCYL,  d##_SIZE, #d, 512 }
 
-static struct drvtyp drv_tab[] = {
-    { HK_NUMSC, HK_NUMSF, HK_NUMCY6, RK06_SIZE, "RK06" },
-    { HK_NUMSC, HK_NUMSF, HK_NUMCY7, RK07_SIZE, "RK07" },
+static DRVTYP drv_tab[] = {
+    HK_DRV (RK06),
+    HK_DRV (RK07),
     { 0 }
     };
 
 /* Flags in the unit flags word */
 
-#define UNIT_V_WLK      DKUF_V_WLK                      /* write locked */
-#define UNIT_V_DTYPE    (DKUF_V_UF + 0)                 /* disk type */
-#define UNIT_V_AUTO     (UNIT_V_DTYPE + 1)              /* autosize */
-#define UNIT_V_DUMMY    (UNIT_V_AUTO + 1)               /* dummy flag */
-#define UNIT_WLK        (1 << UNIT_V_WLK)
-#define UNIT_DTYPE      (1 << UNIT_V_DTYPE)
-#define  UNIT_RK06      (0 << UNIT_V_DTYPE)
-#define  UNIT_RK07      (1 << UNIT_V_DTYPE)
-#define UNIT_AUTO       (1 << UNIT_V_AUTO)
+#define UNIT_V_DUMMY    (DKUF_V_UF + 0)                 /* dummy flag */
 #define UNIT_DUMMY      (1 << UNIT_V_DUMMY)
-#define UNIT_WPRT       (UNIT_WLK | UNIT_RO)            /* write prot */
-#define GET_DTYPE(x)    (((x) >> UNIT_V_DTYPE) & 1)
 
 /* Parameters in the unit descriptor */
 
@@ -555,7 +540,7 @@ int32 hkof = 0;                                         /* offset */
 int32 hkmr = 0;                                         /* maint registers */
 int32 hkmr2 = 0;
 int32 hkmr3 = 0;
-int32 hkdc = 0;                                         /* cylinder */
+uint32 hkdc = 0;                                        /* cylinder */
 int32 hkspr = 0;                                        /* spare */
 int32 hkci = 0;                                         /* ctlr interrupt */
 int32 hkdi = 0;                                         /* drive interrupt */
@@ -584,8 +569,6 @@ void update_hkcs (int32 flags, int32 drv);
 void update_hkds (int32 drv);
 void hk_err (int32 cs1e, int32 cs2e, int32 drve, int32 drv);
 void hk_go (int32 drv);
-t_stat hk_set_type (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
-t_stat hk_show_type (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 t_stat hk_set_bad (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 t_stat hk_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
 const char *hk_description (DEVICE *dptr);
@@ -605,24 +588,7 @@ DIB hk_dib = {
     1, IVCL (HK), VEC_AUTO, { &hk_inta }, IOLN_HK,
     };
 
-UNIT hk_unit[] = {
-    { UDATA (&hk_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_AUTO+
-             UNIT_ROABLE+UNIT_RK06, RK06_SIZE) },
-    { UDATA (&hk_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_AUTO+
-             UNIT_ROABLE+UNIT_RK06, RK06_SIZE) },
-    { UDATA (&hk_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_AUTO+
-             UNIT_ROABLE+UNIT_RK06, RK06_SIZE) },
-    { UDATA (&hk_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_AUTO+
-             UNIT_ROABLE+UNIT_RK06, RK06_SIZE) },
-    { UDATA (&hk_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_AUTO+
-             UNIT_ROABLE+UNIT_RK06, RK06_SIZE) },
-    { UDATA (&hk_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_AUTO+
-             UNIT_ROABLE+UNIT_RK06, RK06_SIZE) },
-    { UDATA (&hk_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_AUTO+
-             UNIT_ROABLE+UNIT_RK06, RK06_SIZE) },
-    { UDATA (&hk_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_AUTO+
-             UNIT_ROABLE+UNIT_RK06, RK06_SIZE) }
-    };
+UNIT hk_unit[HK_NUMDR] = {{0}};
 
 REG hk_reg[] = {
     { GRDATADF (HKCS1,          hkcs1, DEV_RDX, 16, 0, "control/status 1", hk_cs1_bits) },
@@ -664,22 +630,12 @@ REG hk_reg[] = {
     };
 
 MTAB hk_mod[] = {
-    { UNIT_WLK,        0, "write enabled", "WRITEENABLED", 
-        NULL, NULL, NULL, "Write enable disk drive" },
-    { UNIT_WLK, UNIT_WLK, "write locked",  "LOCKED", 
-        NULL, NULL, NULL, "Write lock disk drive"  },
+    { MTAB_XTD|MTAB_VUN, 0, "write enabled", "WRITEENABLED", 
+        &set_writelock, &show_writelock,   NULL, "Write enable disk drive" },
+    { MTAB_XTD|MTAB_VUN, 1, NULL, "LOCKED", 
+        &set_writelock, NULL,   NULL, "Write lock disk drive" },
     { UNIT_DUMMY,      0, NULL,            "BADBLOCK", 
         &hk_set_bad, NULL, NULL, "write bad block table on last track" },
-    { MTAB_XTD|MTAB_VUN, 0, NULL, "RK06",
-      &hk_set_type, NULL, NULL, "Set RK06 Disk Type" },
-    { MTAB_XTD|MTAB_VUN, 1, NULL, "RK07",
-      &hk_set_type, NULL, NULL, "Set RK07 Disk Type" },
-    { MTAB_XTD|MTAB_VUN, 0, "TYPE", NULL,
-      NULL, &hk_show_type, NULL, "Display device type" },
-    { UNIT_AUTO, UNIT_AUTO, "autosize", "AUTOSIZE", 
-      NULL, NULL, NULL, "Set type based on file size at attach" },
-    { UNIT_AUTO,         0, "noautosize",   "NOAUTOSIZE",   
-      NULL, NULL, NULL, "Disable disk autosize on attach" },
     { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0, "FORMAT", "FORMAT={AUTO|SIMH|VHD|RAW}",
       &sim_disk_set_fmt, &sim_disk_show_fmt, NULL, "Set/Display disk format" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0040, "ADDRESS", "ADDRESS",
@@ -706,7 +662,7 @@ DEVICE hk_dev = {
     &hk_boot, &hk_attach, &hk_detach,
     &hk_dib, DEV_DISABLE | DEV_UBUS | DEV_Q18 | DEV_DISK | DEV_DEBUG, 0,
     hk_deb, NULL, NULL, &hk_help, NULL, NULL,
-    &hk_description
+    &hk_description, NULL, &drv_tab
     };
 
 /* I/O dispatch routines, I/O addresses 17777440 - 17777476 */
@@ -951,7 +907,7 @@ fnc = GET_FNC (hkcs1);
 sim_debug (HKDEB_OPS, &hk_dev, ">>HK%d strt: fnc=%s, cs1=%o, cs2=%o, ds=%o, er=%o, cyl=%o, da=%o, ba=%o, wc=%o\n",
              drv, hk_funcs[fnc], hkcs1, hkcs2, hkds[drv], hker[drv], hkdc, hkda, hkba, hkwc);
 uptr = hk_dev.units + drv;                              /* get unit */
-dte = ((hkcs1 & CS1_DT) !=0) != ((uptr->flags & UNIT_DTYPE) != 0);
+dte = ((hkcs1 & CS1_DT) !=0) != (strcasecmp (uptr->drvtyp->name, "RK07") == 0);
 
 if (fnc != FNC_NOP)                                     /* !nop, clr msg sel */
     hkmr = hkmr & ~MR_MS;
@@ -1071,10 +1027,10 @@ return;
 
 t_stat hk_svc (UNIT *uptr)
 {
-int32 i, t, dc, fnc;
+int32 t, dc, fnc;
 t_seccnt sectsread;
-t_stat err;
-int32 wc, awc, da;
+t_stat err = 0;
+uint32 i, wc, awc, da;
 uint32 drv, ba;
 uint16 comp;
 DEVICE *dptr = find_dev_from_unit (uptr);
@@ -1152,11 +1108,11 @@ switch (fnc) {                                          /* case on function */
         da = GET_DA (hkdc, hkda) * HK_NUMWD;            /* get disk addr */
         wc = 0200000 - hkwc;                            /* get true wc */
 
-        if ((da + wc) > HK_SIZE (uptr)) {               /* disk overrun? */
+        if ((da + wc) > uptr->capac) {                  /* disk overrun? */
             hker[drv] = hker[drv] | ER_AOE;             /* set err */
             hkds[drv] = hkds[drv] | DS_ATA;             /* set attn */
-            wc = HK_SIZE (uptr) - da;                   /* trim xfer */
-            if (da >= HK_SIZE (uptr)) {                 /* none left? */
+            wc = (int32)(uptr->capac - da);             /* trim xfer */
+            if (da >= uptr->capac) {                    /* none left? */
                 update_hkcs (CS1_DONE, drv);            /* then done */
                 break;
                 }
@@ -1189,7 +1145,7 @@ switch (fnc) {                                          /* case on function */
         else if (uptr->FNC == FNC_READ) {               /* read? */
             err = sim_disk_rdsect (uptr, da/HK_NUMWD, (uint8 *)hkxb, &sectsread, ((wc + (HK_NUMWD - 1)) & ~(HK_NUMWD - 1))/HK_NUMWD);
             if ((err == SCPE_OK) &&
-                (sectsread != (((wc + (HK_NUMWD - 1)) & ~(HK_NUMWD - 1))/HK_NUMWD)))
+                (sectsread != (t_seccnt)((((wc + (HK_NUMWD - 1)) & ~(HK_NUMWD - 1))/HK_NUMWD))))
                 err = -1;
             sim_disk_data_trace (uptr, (uint8 *)hkxb, da/HK_NUMWD, sectsread*HK_NUMWD*sizeof(*hkxb), "sim_disk_rdsect", HKDEB_DAT & dptr->dctrl, HKDEB_OPS);
             if (hkcs2 & CS2_UAI) {                      /* no addr inc? */
@@ -1209,7 +1165,7 @@ switch (fnc) {                                          /* case on function */
         else {                                          /* wchk */                  
             err = sim_disk_rdsect (uptr, da/HK_NUMWD, (uint8 *)hkxb, &sectsread, ((wc + (HK_NUMWD - 1)) & ~(HK_NUMWD - 1))/HK_NUMWD);
             if ((err == SCPE_OK) &&
-                (sectsread != (((wc + (HK_NUMWD - 1)) & ~(HK_NUMWD - 1))/HK_NUMWD)))
+                (sectsread != (t_seccnt)((((wc + (HK_NUMWD - 1)) & ~(HK_NUMWD - 1))/HK_NUMWD))))
                 err = -1;
             sim_disk_data_trace (uptr, (uint8 *)hkxb, da/HK_NUMWD, sectsread*HK_NUMWD*sizeof(*hkxb), "sim_disk_rdsect", HKDEB_DAT & dptr->dctrl, HKDEB_OPS);
             awc = wc;
@@ -1321,7 +1277,7 @@ if (hk_unit[drv].flags & UNIT_DIS) {                    /* disabled? */
     }
 sim_debug (HKDEB_TRC, &hk_dev, "update_hkds(drv=%d)\n", drv);
 hkds[drv] = (hkds[drv] & (DS_VV | DS_PIP | DS_ATA)) | DS_VLD | DS_DRA;
-if (hk_unit[drv].flags & UNIT_RK07)
+if (strcasecmp(hk_unit[drv].drvtyp->name, "RK07") == 0)
     hkds[drv] = hkds[drv] | DS_DT;
 if (hk_unit[drv].flags & UNIT_ATT) {                    /* attached? */
     if (!sim_is_active (&hk_unit[drv]))                 /* not busy? */
@@ -1395,7 +1351,7 @@ switch (msg) {
                 ((hkds[drv] & DS_PIP)? A0_PIP: 0) |
                 ((uptr->flags & UNIT_WPRT)? A0_WRL: 0) |
                 ((hk_off[drv])? A0_OF: 0) |
-                ((uptr->flags & UNIT_RK07)? A0_DT: 0) |
+                ((strcasecmp(uptr->drvtyp->name, "RK07") == 0)? A0_DT: 0) |
                 ((hkds[drv] & DS_VV)? A0_VV: 0) | A0_DRA;
         if (uptr->flags & UNIT_ATT)
             v = v | A0_SPO | (!sim_is_active (uptr)? A0_RDY: 0);
@@ -1472,8 +1428,20 @@ t_stat hk_reset (DEVICE *dptr)
 {
 int32 i;
 UNIT *uptr;
+static t_bool inited = FALSE;
 
 sim_debug (HKDEB_TRC, &hk_dev, "hk_reset()\n");
+
+if (!inited) {
+    inited = TRUE;
+    for (i = 0; i < HK_NUMDR; i++) {
+        uptr = dptr->units + i;
+        uptr->action = &hk_svc;
+        uptr->flags = UNIT_FIX|UNIT_ATTABLE|UNIT_DISABLE|UNIT_ROABLE;
+        sim_disk_set_drive_type_by_name (uptr, "RK06");
+        }
+    }
+
 hkcs1 = CS1_DONE;                                       /* set done */
 hkcs2 = CS2_IR;                                         /* clear state */
 hkmr = hkmr2 = hkmr3 = 0;
@@ -1507,20 +1475,19 @@ t_stat hk_attach (UNIT *uptr, CONST char *cptr)
 uint32 drv;
 t_stat r;
 int32 old_hkds;
-static const char *drives[] = {"RK06", "RK07", NULL};
 
 uptr->capac = HK_SIZE (uptr);
 r = sim_disk_attach_ex (uptr, cptr, HK_NUMWD * sizeof (uint16), 
                         sizeof (uint16), TRUE, 0, 
                         (uptr->capac == RK06_SIZE) ? "RK06" : "RK07", HK_NUMSC, 0,
-                        (uptr->flags & UNIT_AUTO) ? drives : NULL);
+                        NULL);
 if (r != SCPE_OK)                                       /* error? */
     return r;
 drv = (uint32) (uptr - hk_dev.units);                   /* get drv number */
 old_hkds = hkds[drv];                                   /* save hkds */
 hkds[drv] = DS_ATA | DS_RDY |
     ((uptr->flags & UNIT_WPRT)? DS_WRL: 0) |
-    ((uptr->flags & UNIT_DTYPE)? DS_DT: 0);
+    ((strcasecmp (uptr->drvtyp->name, "RK07") == 0)? DS_DT: 0);
 hker[drv] = 0;                                          /* upd drv status */
 hk_off[drv] = 0;
 hk_dif[drv] = 0;
@@ -1551,27 +1518,6 @@ if (sim_is_active (uptr)) {                             /* unit active? */
 if ((old_hkds & DS_ATA) == 0)                           /* ATN transition? */
     update_hkcs (CS1_DI, drv);                          /* upd ctlr status */
 return sim_disk_detach (uptr);
-}
-
-/* Set type command validation routine */
-
-t_stat hk_set_type (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
-{
-if ((val < 0) || (cptr && *cptr))
-    return SCPE_ARG;
-if (uptr->flags & UNIT_ATT)
-    return SCPE_ALATT;
-uptr->flags = (uptr->flags & ~UNIT_DTYPE) | (val << UNIT_V_DTYPE);
-uptr->capac = (t_addr)drv_tab[val].size;
-return SCPE_OK;
-}
-
-/* Show unit type */
-
-t_stat hk_show_type (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
-{
-fprintf (st, "%s", drv_tab[GET_DTYPE (uptr->flags)].name);
-return SCPE_OK;
 }
 
 /* Set bad block routine */
@@ -1650,7 +1596,7 @@ t_stat hk_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr
 fprintf (st, "RK611/RK06,RK07 Cartridge Disk (HK)\n\n");
 fprintf (st, "RK611  options include the ability to set units write enabled or write locked,\n");
 fprintf (st, "to set the drive type to RK06, RK07, or autosize, and to write a DEC standard\n");
-fprintf (st, "044 compliant bad block table on the last track:\n\n");
+fprintf (st, "144 compliant bad block table on the last track:\n\n");
 fprint_set_help (st, dptr);
 fprint_show_help (st, dptr);
 fprintf (st, "\nThe type options can be used only when a unit is not attached to a file.\n");

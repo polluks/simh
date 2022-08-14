@@ -1,6 +1,6 @@
 /* pdp11_tq.c: TMSCP tape controller simulator
 
-   Copyright (c) 2002-2013, Robert M Supnik
+   Copyright (c) 2002-2022, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -25,6 +25,7 @@
 
    tq           TQK50 tape controller
 
+   26-Mar-22    RMS     Added extra case points for new MTSE definitions
    23-Oct-13    RMS     Revised for new boot setup routine
    23-Jan-12    MP      Added missing support for Logical EOT detection while
                         positioning.
@@ -474,10 +475,10 @@ REG tq_reg[] = {
     };
 
 MTAB tq_mod[] = {
-    { MTUF_WLK,         0, "write enabled",  "WRITEENABLED", 
-        NULL, NULL, NULL, "Write enable tape drive" },
-    { MTUF_WLK,  MTUF_WLK, "write locked",   "LOCKED", 
-        NULL, NULL, NULL, "Write lock tape drive"  },
+    { MTAB_XTD|MTAB_VUN, 0, "write enabled", "WRITEENABLED", 
+        &set_writelock, &show_writelock,   NULL, "Write enable tape drive" },
+    { MTAB_XTD|MTAB_VUN, 1, NULL, "LOCKED", 
+        &set_writelock, NULL,   NULL, "Write lock tape drive" },
     { MTAB_XTD|MTAB_VDV,  TQ5_TYPE,           NULL,   "TK50",
         &tq_set_type, NULL, NULL, "Set TK50 Device Type" },
     { MTAB_XTD|MTAB_VDV,  TQ7_TYPE,           NULL,   "TK70",
@@ -509,8 +510,6 @@ MTAB tq_mod[] = {
 #if defined (VM_PDP11)
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 004,     "ADDRESS", "ADDRESS",
         &set_addr, &show_addr, NULL, "Bus address" },
-    { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0, NULL, "AUTOCONFIGURE",
-        &set_addr_flt, NULL, NULL, "Enable autoconfiguration of address & vector" },
 #else
     { MTAB_XTD|MTAB_VDV, 004,               "ADDRESS", NULL,
         NULL, &show_addr, NULL, "Bus address" },
@@ -1583,6 +1582,10 @@ switch (st) {
         uptr->flags = uptr->flags | UNIT_SXC;
         return ST_WPR;
 
+    default:
+        uptr->flags = uptr->flags | UNIT_SXC;
+        return SCPE_IERR;
+
     case MTSE_LEOT:
         return ST_LED;
         }
@@ -2454,7 +2457,7 @@ static t_stat tq_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const cha
 const char *devtype = UNIBUS ? "TUK50" : "TQK50";
 
 fprintf (st, "%s (TQ)\n\n", tq_description (dptr));
-fprintf (st, "The TQ controller simulates the %s TMSCP disk controller.  TQ options\n", devtype);
+fprintf (st, "The TQ controller simulates the %s TMSCP tape controller.  TQ options\n", devtype);
 fprintf (st, "include the ability to set units write enabled or write locked, and to\n");
 fprintf (st, "specify the controller type and tape length:\n");
 fprint_set_help (st, dptr);

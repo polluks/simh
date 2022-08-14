@@ -104,35 +104,28 @@
 #define RK_NUMTR        (RK_NUMCY * RK_NUMSF)           /* tracks/drive */
 #define RK_NUMDR        8                               /* drives/controller */
 #define RK_M_NUMDR      07
-#define RK_SIZE         (RK_NUMCY * RK_NUMSF * RK_NUMSC * RK_NUMWD)
+#define RK_SIZE         (RK_NUMCY * RK_NUMSF * RK_NUMSC)
+#define RK_RSRVSEC      (3 * RK_NUMSF * RK_NUMSC)       /* reserved (unused) disk area */
                                                         /* words/drive */
 #define RK_CTLI         1                               /* controller int */
 #define RK_SCPI(x)      (2u << (x))                     /* drive int */
 #define RK_MAXFR        (1 << 16)                       /* max transfer */
 
+#define RK_DRV(d)                                \
+    { RK_NUMSC, RK_NUMSF, RK_NUMCY, RK_SIZE, #d, \
+      RK_NUMWD*2 }
 
-struct drvtyp {
-    int32       sect;                                   /* sectors */
-    int32       surf;                                   /* surfaces */
-    int32       cyl;                                    /* cylinders */
-    int32       size;                                   /* #blocks */
-    const char  *name;                                  /* device type name */
-    };
-
-static struct drvtyp drv_tab[] = {
-    { RK_NUMSC, RK_NUMSF, RK_NUMCY*2, RK_SIZE, "RK05" },
+static DRVTYP drv_tab[] = {
+    RK_DRV(RK05),
     { 0 }
     };
 
 
 /* Flags in the unit flags word */
 
-#define UNIT_V_HWLK     (DKUF_V_WLK + 0)                /* hwre write lock */
 #define UNIT_V_SWLK     (DKUF_V_UF + 0)                 /* swre write lock */
-#define UNIT_HWLK       (1u << UNIT_V_HWLK)
+#define UNIT_HWLK       UNIT_WPRT
 #define UNIT_SWLK       (1u << UNIT_V_SWLK)
-#define UNIT_WPRT       (UNIT_HWLK|UNIT_SWLK|UNIT_RO)   /* write prot */
-#define GET_DTYPE(x)    (0)
 
 /* Parameters in the unit descriptor */
 
@@ -354,7 +347,6 @@ void rk_set_done (int32 error);
 void rk_clr_done (void);
 t_stat rk_boot (int32 unitno, DEVICE *dptr);
 t_stat rk_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
-t_stat rk_show_type (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 t_stat rk_attach (UNIT *uptr, CONST char *cptr);
 t_stat rk_detach (UNIT *uptr);
 const char *rk_description (DEVICE *dptr);
@@ -384,24 +376,7 @@ DIB rk_dib = {
     1, IVCL (RK), VEC_AUTO, { &rk_inta }, IOLN_RK,
     };
 
-UNIT rk_unit[] = {
-    { UDATA (&rk_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+
-             UNIT_ROABLE, RK_SIZE) },
-    { UDATA (&rk_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+
-             UNIT_ROABLE, RK_SIZE) },
-    { UDATA (&rk_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+
-             UNIT_ROABLE, RK_SIZE) },
-    { UDATA (&rk_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+
-             UNIT_ROABLE, RK_SIZE) },
-    { UDATA (&rk_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+
-             UNIT_ROABLE, RK_SIZE) },
-    { UDATA (&rk_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+
-             UNIT_ROABLE, RK_SIZE) },
-    { UDATA (&rk_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+
-             UNIT_ROABLE, RK_SIZE) },
-    { UDATA (&rk_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+
-             UNIT_ROABLE, RK_SIZE) }
-    };
+UNIT rk_unit[RK_NUMDR] = {{0}};
 
 REG rk_reg[] = {
     { ORDATADF (RKCS, rkcs, 16, "control/status", rk_cs_bits) },
@@ -425,12 +400,10 @@ REG rk_reg[] = {
     };
 
 MTAB rk_mod[] = {
-    { UNIT_HWLK,        0, "write enabled", "WRITEENABLED", 
-        NULL, NULL, NULL, "Write enable disk drive" },
-    { UNIT_HWLK, UNIT_HWLK, "write locked",  "LOCKED", 
-        NULL, NULL, NULL, "Write lock disk drive"  },
-    { MTAB_XTD|MTAB_VUN, 0, "TYPE", NULL,
-      NULL, &rk_show_type, NULL, "Display device type" },
+    { MTAB_XTD|MTAB_VUN, 0, "write enabled", "WRITEENABLED", 
+        &set_writelock, &show_writelock,   NULL, "Write enable tape drive" },
+    { MTAB_XTD|MTAB_VUN, 1, NULL, "LOCKED", 
+        &set_writelock, NULL,   NULL, "Write lock tape drive" },
     { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0, "FORMAT", "FORMAT={AUTO|SIMH|VHD|RAW}",
       &sim_disk_set_fmt, &sim_disk_show_fmt, NULL, "Set/Display disk format" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 010, "ADDRESS", "ADDRESS",
@@ -447,7 +420,7 @@ DEVICE rk_dev = {
     &rk_boot, &rk_attach, &rk_detach,
     &rk_dib, DEV_DISABLE | DEV_UBUS | DEV_Q18 | DEV_DEBUG | RK_DIS | DEV_DISK, 0,
     rk_deb, NULL, NULL, &rk_help, NULL, NULL,
-    &rk_description 
+    &rk_description, NULL, &drv_tab
     };
 
 /* I/O dispatch routine, I/O addresses 17777400 - 17777416
@@ -480,7 +453,7 @@ switch ((PA >> 1) & 07) {                               /* decode PA<3:1> */
                 rkds = rkds | RKDS_RDY;
             if (!sim_is_active (uptr))                  /* idle? */
                 rkds = rkds | RKDS_RWS;
-            if (uptr->flags & UNIT_WPRT)                /* write locked? */
+            if (uptr->flags & (UNIT_HWLK|UNIT_SWLK))    /* write locked? */
                 rkds = rkds | RKDS_WLK;
             if (GET_SECT (rkda) == (rkds & RKDS_SC))
                 rkds = rkds | RKDS_ON_SC;
@@ -621,7 +594,7 @@ if ((rkcs & RKCS_FMT) &&                                /* format and */
     return;
     }
 if ((func == RKCS_WRITE) &&                             /* write and locked? */
-    (uptr->flags & UNIT_WPRT)) {
+    (uptr->flags & (UNIT_HWLK|UNIT_SWLK))) {
     rk_set_done (RKER_WLK);
     return;
     }
@@ -888,6 +861,17 @@ t_stat rk_reset (DEVICE *dptr)
 {
 int32 i;
 UNIT *uptr;
+static t_bool inited = FALSE;
+
+if (!inited) {
+    inited = TRUE;
+    for (i = 0; i < RK_NUMDR; i++) {
+        uptr = dptr->units + i;
+        uptr->action = &rk_svc;
+        uptr->flags = UNIT_FIX|UNIT_ATTABLE|UNIT_DISABLE|UNIT_ROABLE;
+        sim_disk_set_drive_type_by_name (uptr, "RK05");
+        }
+    }
 
 rkcs = CSR_DONE;
 rkda = rkba = rker = rkds = 0;
@@ -912,28 +896,17 @@ return auto_config (0, 0);
 
 t_stat rk_attach (UNIT *uptr, CONST char *cptr)
 {
-t_stat r;
-
-r = sim_disk_attach_ex (uptr, cptr, RK_NUMWD * sizeof (uint16), 
-                        sizeof (uint16), TRUE, 0, 
-                        "RK05", 0, 0, NULL);
-if (r != SCPE_OK)                                       /* error? */
-    return r;
-return SCPE_OK;
+return sim_disk_attach_ex2 (uptr, cptr, RK_NUMWD * sizeof (uint16), 
+                            sizeof (uint16), TRUE, 0, 
+                            "RK05", 0, 0, 
+                            NULL,
+                            RK_RSRVSEC);
 }
 
 t_stat rk_detach (UNIT *uptr)
 {
 sim_cancel (uptr);
 return sim_disk_detach (uptr);
-}
-
-/* Show unit type */
-
-t_stat rk_show_type (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
-{
-fprintf (st, "%s", drv_tab[GET_DTYPE (uptr->flags)].name);
-return SCPE_OK;
 }
 
 /* Device bootstrap */

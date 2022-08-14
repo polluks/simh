@@ -1,9 +1,7 @@
 /*************************************************************************
  *                                                                       *
- * $Id: sim_imd.c 1999 2008-07-22 04:25:28Z hharte $                     *
- *                                                                       *
- * Copyright (c) 2007-2008 Howard M. Harte.                              *
- * http://www.hartetec.com                                               *
+ * Copyright (c) 2007-2022 Howard M. Harte.                              *
+ * https://github.com/hharte                                             *
  *                                                                       *
  * Permission is hereby granted, free of charge, to any person obtaining *
  * a copy of this software and associated documentation files (the       *
@@ -36,9 +34,6 @@
  *     see: http://www.classiccmp.org/dunfield/img/index.htm             *
  *     for details on the ImageDisk format and other utilities.          *
  *                                                                       *
- * Environment:                                                          *
- *     User mode only                                                    *
- *                                                                       *
  *************************************************************************/
 
 /* Change log:
@@ -46,14 +41,8 @@
                     Cylinder maps in the .IMD image file (AGN)
 */
 
-#if defined(USE_SIM_IMD)
-
 #include "sim_defs.h"
 #include "sim_imd.h"
-
-#if (defined (__MWERKS__) && defined (macintosh)) || defined(__DECC)
-#define __FUNCTION__ __FILE__
-#endif
 
 static t_stat commentParse(DISK_INFO *myDisk, uint8 comment[], uint32 buffLen);
 static t_stat diskParse(DISK_INFO *myDisk, uint32 isVerbose);
@@ -90,7 +79,7 @@ DISK_INFO *diskOpen(FILE *fileref, uint32 isVerbose)
  * After this function returns, the file pointer is placed after the comment and
  * the 0x1A "EOF" marker.
  *
- * The comment parameter is optional, and if NULL, then the ocmment will not
+ * The comment parameter is optional, and if NULL, then the comment will not
  * be extracted from the IMD file, but the file position will still be advanced
  * to the end of the comment.
  */
@@ -101,12 +90,12 @@ static t_stat commentParse(DISK_INFO *myDisk, uint8 comment[], uint32 buffLen)
 
     /* rewind to the beginning of the file. */
     rewind(myDisk->file);
-    cData = fgetc(myDisk->file);
+    cData = (uint8)fgetc(myDisk->file);
     while ((!feof(myDisk->file)) && (cData != 0x1a)) {
         if ((comment != NULL) && (commentLen < buffLen)) {
             comment[commentLen++] = cData;
         }
-        cData = fgetc(myDisk->file);
+        cData = (uint8)fgetc(myDisk->file);
     }
     if (comment != NULL) {
         if (commentLen == buffLen)
@@ -130,7 +119,7 @@ static t_stat diskParse(DISK_INFO *myDisk, uint32 isVerbose)
     uint8 sectorHeadMap[256];
     uint8 sectorCylMap[256];
     uint32 sectorSize, sectorHeadwithFlags, sectRecordType;
-    uint32 i;
+    uint32 hdrBytes, i;
     uint8 start_sect;
 
     uint32 TotalSectorCount = 0;
@@ -161,7 +150,16 @@ static t_stat diskParse(DISK_INFO *myDisk, uint32 isVerbose)
     do {
         sim_debug(myDisk->debugmask, myDisk->device, "start of track %d at file offset %ld\n", myDisk->ntracks, ftell(myDisk->file));
 
-        sim_fread(&imd, 1, 5, myDisk->file);
+        hdrBytes = sim_fread(&imd, 1, 5, myDisk->file);
+  
+        if ((hdrBytes == 0) && feof(myDisk->file))
+            break; /* detected end of IMD file */
+
+        if (hdrBytes != 5) {
+            sim_printf("SIM_IMD: Header read returned %d bytes instead of 5.\n", hdrBytes);
+            return (SCPE_OPENERR);
+        }
+
         if (feof(myDisk->file))
             break;
         sectorSize = 128 << (imd.sectsize & 0x1f);
@@ -178,6 +176,18 @@ static t_stat diskParse(DISK_INFO *myDisk, uint32 isVerbose)
 
         if((imd.head + 1) > myDisk->nsides) {
             myDisk->nsides = imd.head + 1;
+        }
+
+        if (imd.head >= MAX_HEAD) {
+            sim_printf("SIM_IMD: Invalid head %d, a maximum of %d heads are supported.\n",
+                imd.head, MAX_HEAD);
+            return (SCPE_IERR);
+        }
+
+        if (imd.cyl >= MAX_CYL) {
+            sim_printf("SIM_IMD: Invalid cylinder %d, a maximum of %d cylinders are supported.\n",
+                imd.cyl, MAX_CYL);
+            return (SCPE_IERR);
         }
 
         myDisk->track[imd.cyl][imd.head].mode = imd.mode;
@@ -240,7 +250,7 @@ static t_stat diskParse(DISK_INFO *myDisk, uint32 isVerbose)
         /* Now read each sector */
         for(i=0;i<imd.nsects;i++) {
             TotalSectorCount++;
-            sim_debug(myDisk->debugmask, myDisk->device, "Sector Phys: %d/Logical: %d: %d bytes: ", i, sectorMap[i], sectorSize);
+            sim_debug(myDisk->debugmask, myDisk->device, "Sector Phys: %2d/Logical: %2d: %4d bytes, offset: 0x%05x: ", i, sectorMap[i], sectorSize, (unsigned int)ftell(myDisk->file));
             sectRecordType = fgetc(myDisk->file);
             /* AGN Logical head mapping */
             myDisk->track[imd.cyl][imd.head].logicalHead[i] = sectorHeadMap[i];
@@ -262,7 +272,7 @@ static t_stat diskParse(DISK_INFO *myDisk, uint32 isVerbose)
 /*                  sim_debug(myDisk->debugmask, myDisk->device, "Uncompressed Data\n"); */
                     if (sectorMap[i]-start_sect < MAX_SPT) {
                         myDisk->track[imd.cyl][imd.head].sectorOffsetMap[sectorMap[i]-start_sect] = ftell(myDisk->file);
-                        sim_fseek(myDisk->file, sectorSize, SEEK_CUR);
+                        (void)sim_fseek(myDisk->file, sectorSize, SEEK_CUR);
                     }
                     else {
                         sim_printf("SIM_IMD: ERROR: Illegal sector offset %d\n", sectorMap[i]-start_sect);
@@ -277,9 +287,9 @@ static t_stat diskParse(DISK_INFO *myDisk, uint32 isVerbose)
                         myDisk->track[imd.cyl][imd.head].sectorOffsetMap[sectorMap[i]-start_sect] = ftell(myDisk->file);
                         myDisk->flags |= FD_FLAG_WRITELOCK; /* Write-protect the disk if any sectors are compressed. */
                         if (1) {
-                            uint8 cdata = fgetc(myDisk->file);
+                            uint8 cdata = (uint8)fgetc(myDisk->file);
 
-                            sim_debug(myDisk->debugmask, myDisk->device, "Compressed Data = 0x%02x\n", cdata);
+                            sim_debug(myDisk->debugmask, myDisk->device, "Compressed Data = 0x%02x", cdata);
                             }
                     }
                     else {
@@ -296,15 +306,16 @@ static t_stat diskParse(DISK_INFO *myDisk, uint32 isVerbose)
         }
 
         myDisk->ntracks++;
+
     } while (!feof(myDisk->file));
 
     sim_debug(myDisk->debugmask, myDisk->device, "Processed %d sectors\n", TotalSectorCount);
 
     for(i=0;i<myDisk->ntracks;i++) {
         uint8 j;
-        sim_debug(myDisk->verbosedebugmask, myDisk->device, "Track %02d: ", i);
-        for(j=0;j<imd.nsects;j++) {
-            sim_debug(myDisk->verbosedebugmask, myDisk->device, "0x%06x ", myDisk->track[i][0].sectorOffsetMap[j]);
+        sim_debug(myDisk->verbosedebugmask, myDisk->device, "Track %3d: ", i);
+        for(j=0;j<myDisk->track[i >> 1][i & 1].nsects;j++) {
+            sim_debug(myDisk->verbosedebugmask, myDisk->device, "0x%05x ", myDisk->track[i >> 1][i & 1].sectorOffsetMap[j]);
         }
         sim_debug(myDisk->verbosedebugmask, myDisk->device, "\n");
     }
@@ -354,7 +365,7 @@ t_stat diskCreate(FILE *fileref, const char *ctlr_comment)
 
     if(sim_fsize(fileref) != 0) {
         sim_printf("SIM_IMD: Disk image already has data, do you want to overwrite it? ");
-        answer = getchar();
+        answer = (uint8)getchar();
 
         if((answer != 'y') && (answer != 'Y')) {
             return (SCPE_OPENERR);
@@ -390,7 +401,8 @@ t_stat diskCreate(FILE *fileref, const char *ctlr_comment)
     rewind(fileref);
 
     /* Erase the contents of the IMD file in case we are overwriting an existing image. */
-    if (sim_set_fsize(fileref, (t_addr)ftell (fileref)) == -1) {
+    if (sim_set_fsize(fileref, 0) == -1) {
+        free(comment);
         sim_printf("SIM_IMD: Error overwriting disk image.\n");
         return(SCPE_OPENERR);
     }
@@ -522,9 +534,9 @@ t_stat sectRead(DISK_INFO *myDisk,
 
     sim_debug(myDisk->debugmask, myDisk->device, "Reading C:%d/H:%d/S:%d, len=%d, offset=0x%08x\n", Cyl, Head, Sector, buflen, sectorFileOffset);
 
-    sim_fseek(myDisk->file, sectorFileOffset-1, SEEK_SET);
+    (void)sim_fseek(myDisk->file, sectorFileOffset-1, SEEK_SET);
 
-    sectRecordType = fgetc(myDisk->file);
+    sectRecordType = (uint8)fgetc(myDisk->file);
     switch(sectRecordType) {
         case SECT_RECORD_UNAVAILABLE:   /* Data could not be read from the original media */
             *flags |= IMD_DISK_IO_ERROR_GENERAL;
@@ -532,6 +544,7 @@ t_stat sectRead(DISK_INFO *myDisk,
         case SECT_RECORD_NORM_ERR:      /* Normal Data with read error */
         case SECT_RECORD_NORM_DAM_ERR:  /* Normal Data with deleted address mark with read error */
             *flags |= IMD_DISK_IO_ERROR_CRC;
+            /* fall through */
         case SECT_RECORD_NORM:          /* Normal Data */
         case SECT_RECORD_NORM_DAM:      /* Normal Data with deleted address mark */
 
@@ -544,6 +557,7 @@ t_stat sectRead(DISK_INFO *myDisk,
         case SECT_RECORD_NORM_COMP_ERR: /* Compressed Normal Data */
         case SECT_RECORD_NORM_DAM_COMP_ERR: /* Compressed Normal Data with deleted address mark */
             *flags |= IMD_DISK_IO_ERROR_CRC;
+            /* fall through */
         case SECT_RECORD_NORM_COMP:     /* Compressed Normal Data */
         case SECT_RECORD_NORM_DAM_COMP: /* Compressed Normal Data with deleted address mark */
 /*          sim_debug(myDisk->debugmask, myDisk->device, "Compressed Data\n"); */
@@ -621,7 +635,7 @@ t_stat sectWrite(DISK_INFO *myDisk,
 
     sectorFileOffset = myDisk->track[Cyl][Head].sectorOffsetMap[Sector-start_sect];
 
-    sim_fseek(myDisk->file, sectorFileOffset-1, SEEK_SET);
+    (void)sim_fseek(myDisk->file, sectorFileOffset-1, SEEK_SET);
 
     if (*flags & IMD_DISK_IO_ERROR_GENERAL) {
         sectRecordType = SECT_RECORD_UNAVAILABLE;
@@ -659,7 +673,11 @@ t_stat sectWrite(DISK_INFO *myDisk,
  * Cromemco CDOS "INIT.COM"
  * ADC Super-Six (CP/M-80) "FMT8.COM"
  * 86-DOS "INIT.COM"
- *
+ * MS-DOS 1.25 "FORMAT.COM" - SSSD 8"
+ * MS-DOS 1.25 "FORMAT.COM /D" - DSDD 8"
+ * OASIS-80 v5.6 "INITDISK A (FORMAT,SECTOR 13)" - SSSD 8"
+ * OASIS-80 v5.6 "INITDISK A (FORMAT)" - SSDD 8"
+ * OASIS-80 v5.6 "INITDISK A (FORMAT,HEAD 2)" - DSDD 8"
  */
 t_stat trackWrite(DISK_INFO *myDisk,
                uint32 Cyl,
@@ -672,10 +690,12 @@ t_stat trackWrite(DISK_INFO *myDisk,
                uint32 *flags)
 {
     FILE *fileref;
-    IMD_HEADER track_header;
+    IMD_HEADER track_header = { 0 };
     uint8 *sectorData;
+    t_addr comment;
     unsigned long i;
     unsigned long dataLen;
+    uint8 sectsize = 0;
 
     *flags = 0;
 
@@ -702,7 +722,8 @@ t_stat trackWrite(DISK_INFO *myDisk,
         commentParse(myDisk, NULL, 0);
 
         /* Truncate the IMD file after the comment field. */
-        if (sim_set_fsize(fileref, (t_addr)ftell (fileref)) == -1) {
+        if (((comment = (t_addr)ftell (fileref)) == (t_addr)-1) ||
+            (sim_set_fsize(fileref, comment) == -1)) {
             sim_printf("Disk truncation failed.\n");
             *flags |= IMD_DISK_IO_ERROR_GENERAL;
             return(SCPE_IOERR);
@@ -723,10 +744,19 @@ t_stat trackWrite(DISK_INFO *myDisk,
     track_header.cyl = Cyl;
     track_header.head = Head;
     track_header.nsects = numSectors;
-    track_header.sectsize = sectorLen;
+
+    for (i = (sectorLen >> 8); i; i >>= 1) {
+        sectsize++;
+    }
+
+    if (sectsize > IMD_MAX_SECTSIZE) {
+        sim_printf("SIM_IMD: ERROR: Invalid sectsize %d\n", sectsize);
+        return(SCPE_IERR);
+    }
+    track_header.sectsize = sectsize;
 
     /* Forward to end of the file, write track header and sector map. */
-    sim_fseek(myDisk->file, 0, SEEK_END);
+    (void)sim_fseek(myDisk->file, 0, SEEK_END);
     sim_fwrite(&track_header, 1, sizeof(IMD_HEADER), fileref);
     sim_fwrite(sectorMap, 1, numSectors, fileref);
 
@@ -763,7 +793,7 @@ t_stat assignDiskType(UNIT *uptr) {
     char header[4];
     t_offset pos = sim_ftell(uptr->fileref);
 
-    sim_fseek(uptr->fileref, (t_addr)0, SEEK_SET);
+    rewind(uptr->fileref);
     if (fgets(header, 4, uptr->fileref) == NULL)
         uptr->u3 = IMAGE_TYPE_DSK;
     else if (strncmp(header, "IMD", 3) == 0)
@@ -775,8 +805,6 @@ t_stat assignDiskType(UNIT *uptr) {
     }
     else
         uptr->u3 = IMAGE_TYPE_DSK;
-    sim_fseeko(uptr->fileref, pos, SEEK_SET);
+    (void)sim_fseeko(uptr->fileref, pos, SEEK_SET);
     return result;
 }
-
-#endif /* USE_SIM_IMD */

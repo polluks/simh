@@ -226,7 +226,7 @@ uint16 dz_lpr[MAX_DZ_MUXES] = { 0 };                    /* line param */
 uint16 dz_tcr[MAX_DZ_MUXES] = { 0 };                    /* xmit control */
 uint16 dz_msr[MAX_DZ_MUXES] = { 0 };                    /* modem status */
 uint16 dz_tdr[MAX_DZ_MUXES] = { 0 };                    /* xmit data */
-uint16 dz_silo[MAX_DZ_MUXES][DZ_SILO_ALM] = { 0 };      /* silo */
+uint16 dz_silo[MAX_DZ_MUXES][DZ_SILO_ALM] = { {0} };    /* silo */
 uint16 dz_scnt[MAX_DZ_MUXES] = { 0 };                   /* silo used */
 uint8 dz_sae[MAX_DZ_MUXES] = { 0 };                     /* silo alarm enabled */
 uint32 dz_rxi = 0;                                      /* rcv interrupts */
@@ -243,6 +243,7 @@ TMXR dz_desc = { 0, 0, 0, NULL };                       /* mux descriptor */
 #define DBG_RCV  TMXR_DBG_RCV                           /* display Received Data */
 #define DBG_RET  TMXR_DBG_RET                           /* display Read Data */
 #define DBG_MDM  TMXR_DBG_MDM                           /* display Modem Signals */
+#define DBG_CFG  TMXR_DBG_CFG                           /* display Line Configuration Changes */
 #define DBG_CON  TMXR_DBG_CON                           /* display connection activities */
 #define DBG_TRC  TMXR_DBG_TRC                           /* display trace routine calls */
 #define DBG_ASY  TMXR_DBG_ASY                           /* display Asynchronous Activities */
@@ -254,6 +255,7 @@ DEBTAB dz_debug[] = {
   {"RCV",    DBG_RCV, "Received Data"},
   {"RET",    DBG_RET, "Read Data"},
   {"MDM",    DBG_MDM, "Modem Signals"},
+  {"CFG",    DBG_CFG, "Line Configuration Changes"},
   {"CON",    DBG_CON, "connection activities"},
   {"TRC",    DBG_TRC, "trace routine calls"},
   {"ASY",    DBG_ASY, "Asynchronous Activities"},
@@ -340,14 +342,10 @@ MTAB dz_mod[] = {
         &set_addr, &show_addr, NULL, "Bus address" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0, "VECTOR", "VECTOR",
         &set_vec, &dz_show_vec, (void *) &dz_desc, "Interrupt vector" },
-#if !defined (VM_PDP10)
-    { MTAB_XTD|MTAB_VDV, 0, NULL, "AUTOCONFIGURE",
-        &set_addr_flt, NULL, NULL, "Enable autoconfiguration of address & vector" },
-#endif
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0, "LINES", "LINES=n",
         &dz_setnl, &tmxr_show_lines, (void *) &dz_desc, "Display number of lines" },
     { MTAB_XTD|MTAB_VDV|MTAB_NC, 0, NULL, "LOG=n=file",
-        &dz_set_log, NULL, &dz_desc },
+        &dz_set_log, NULL, &dz_desc, "Enables logging on designated line" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0, NULL, "NOLOG=n",
         &dz_set_nolog, NULL, &dz_desc, "Disable logging on designated line" },
     { MTAB_XTD|MTAB_VDV|MTAB_NMO, 0, "LOG", NULL,
@@ -839,6 +837,12 @@ if (sim_switches & SWMASK ('M')) {                      /* modem control? */
     }
 
 for (dz = 0; dz < dz_desc.lines/DZ_LINES; dz++) {
+    for (muxln = 0; muxln < DZ_LINES; muxln++) {
+        TMLN *lp = &dz_ldsc[(dz * DZ_LINES) + muxln];
+
+		if (lp->serconfig)
+            tmxr_set_config_line (lp, lp->serconfig);	/* make settings consistent */
+        }
     if (!dz_mctl || (0 == (dz_csr[dz] & CSR_MSE)))      /* enabled? */
         continue;
     for (muxln = 0; muxln < DZ_LINES; muxln++) {
@@ -856,10 +860,19 @@ return SCPE_OK;
 
 t_stat dz_detach (UNIT *uptr)
 {
+int32 dz, muxln;
 t_stat r = tmxr_detach (&dz_desc, uptr);
 
 dz_mctl = dz_auto = 0;                                  /* modem ctl off */
 tmxr_clear_modem_control_passthru (&dz_desc);
+for (dz = 0; dz < dz_desc.lines/DZ_LINES; dz++) {
+    for (muxln = 0; muxln < DZ_LINES; muxln++) {
+        TMLN *lp = &dz_ldsc[(dz * DZ_LINES) + muxln];
+
+		free (lp->serconfig);
+		lp->serconfig = NULL;
+        }
+	}
 return r;
 }
 

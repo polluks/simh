@@ -82,6 +82,7 @@
 
 #include "vax_defs.h"
 #include "sim_tmxr.h"
+#include "sim_disk.h"
 
 /* Terminal definitions */
 
@@ -155,11 +156,9 @@ static BITFIELD tmr_iccs_bits [] = {
 #define FL_M_TRACK      0377
 #define FL_NUMSC        26                              /* sectors/track */
 #define FL_M_SECTOR     0177
+#define FL_NUMSF        1
 #define FL_NUMBY        128                             /* bytes/sector */
-#define FL_SIZE         (FL_NUMTR * FL_NUMSC * FL_NUMBY)        /* bytes/disk */
-#define UNIT_V_WLK      (UNIT_V_UF)                     /* write locked */
-#define UNIT_WLK        (1u << UNIT_V_UF)
-#define UNIT_WPRT       (UNIT_WLK | UNIT_RO)            /* write protect */
+#define FL_SIZE         (FL_NUMTR * FL_NUMSC)           /* sectors/disk */
 
 #define FL_IDLE         0                               /* idle state */
 #define FL_RWDS         1                               /* rw, sect next */
@@ -192,6 +191,16 @@ static BITFIELD tmr_iccs_bits [] = {
 
 #define TRACK u3                                        /* current track */
 #define CALC_DA(t,s) (((t) * FL_NUMSC) + ((s) - 1)) * FL_NUMBY
+
+#define FL_DRV(d)                                \
+    { FL_NUMSC, FL_NUMSF, FL_NUMTR, FL_SIZE, #d, \
+      FL_NUMBY }
+
+
+static DRVTYP drv_typ[] = {
+    FL_DRV(RX01),
+    { 0 }
+    };
 
 int32 tti_csr = 0;                                      /* control/status */
 uint32 tti_buftime;                                     /* time input character arrived */
@@ -251,6 +260,8 @@ t_stat clk_detach (UNIT *uptr);
 t_stat tmr_reset (DEVICE *dptr);
 t_stat fl_svc (UNIT *uptr);
 t_stat fl_reset (DEVICE *dptr);
+t_stat fl_attach (UNIT *uptr, CONST char *cptr);
+t_stat fl_detach (UNIT *uptr);
 int32 icr_rd (void);
 void tmr_sched (uint32 incr);
 t_stat todr_resync (void);
@@ -405,8 +416,7 @@ DEVICE tmr_dev = {
    fl_mod       RX modifier list
 */
 
-UNIT fl_unit = { UDATA (&fl_svc,
-      UNIT_FIX+UNIT_ATTABLE+UNIT_BUFABLE+UNIT_MUSTBUF, FL_SIZE) };
+UNIT fl_unit = {0};
 
 REG fl_reg[] = {
     { HRDATAD (FNC,          fl_fnc,  8, "function select") },
@@ -426,8 +436,10 @@ REG fl_reg[] = {
     };
 
 MTAB fl_mod[] = {
-    { UNIT_WLK,         0, "write enabled",  "WRITEENABLED", NULL, NULL, NULL, "Write enable floppy drive" },
-    { UNIT_WLK,  UNIT_WLK, "write locked",   "LOCKED", NULL, NULL, NULL, "Write lock floppy drive"  },
+    { MTAB_XTD|MTAB_VUN, 0, "write enabled", "WRITEENABLED", 
+        &set_writelock, &show_writelock,   NULL, "Write enable floppy drive" },
+    { MTAB_XTD|MTAB_VUN, 1, NULL, "LOCKED", 
+        &set_writelock, NULL,   NULL, "Write lock floppy drive" },
     { 0 }
     };
 
@@ -435,9 +447,9 @@ DEVICE fl_dev = {
     "CS", &fl_unit, fl_reg, fl_mod,
     1, DEV_RDX, 20, 1, DEV_RDX, 8,
     NULL, NULL, &fl_reset,
-    NULL, NULL, NULL,
-    NULL, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 
-    &fl_description
+    NULL, &fl_attach, &fl_detach,
+    NULL, DEV_DISK, 0, NULL, NULL, NULL, NULL, NULL, NULL, 
+    &fl_description, NULL, &drv_typ
     };
 
 /* Terminal MxPR routines
@@ -633,7 +645,7 @@ if ((val & TMR_CSR_RUN) == 0) {                         /* clearing run? */
     sim_cancel (&tmr_unit);                             /* cancel timer */
     }
 if ((tmr_iccs & CSR_DONE) && (val & CSR_DONE) &&        /* Interrupt Acked? */
-    (10000 == (tmr_nicr) ? (~tmr_nicr + 1) : 0xFFFFFFFF))/* of 10ms tick */
+    (10000 == (tmr_nicr ? (~tmr_nicr + 1) : 0xFFFFFFFF)))/* of 10ms tick */
     sim_rtcn_tick_ack (20, TMR_CLK);                    /* Let timers know */
 tmr_iccs = tmr_iccs & ~(val & TMR_CSR_W1C);             /* W1C csr */
 tmr_iccs = (tmr_iccs & ~TMR_CSR_WR) |                   /* new r/w */
@@ -739,10 +751,12 @@ else
 
 t_stat clk_reset (DEVICE *dptr)
 {
-if (clk_unit.filebuf == NULL) {                         /* make sure the TODR is initialized */
-    clk_unit.filebuf = calloc(sizeof(TOY), 1);
+if ((clk_unit.filebuf == NULL) ||                       /* make sure the TODR is initialized */
+    (sim_switches & SWMASK ('P'))) {
+    clk_unit.filebuf = realloc(clk_unit.filebuf, sizeof(TOY));
     if (clk_unit.filebuf == NULL)
         return SCPE_MEM;
+    memset (clk_unit.filebuf, 0, sizeof(TOY));
     }
 todr_resync ();
 sim_activate_after (&clk_unit, 10000);
@@ -752,8 +766,8 @@ return SCPE_OK;
 
 t_stat clk_svc (UNIT *uptr)
 {
-sim_activate_after (uptr, 10000);
 tmr_poll = sim_rtcn_calb (100, TMR_CLK);
+sim_activate_after (uptr, 10000);
 tmxr_poll = tmr_poll * TMXR_MULT;                       /* set mux poll */
 return SCPE_OK;
 }
@@ -763,6 +777,12 @@ t_stat clk_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cpt
 fprintf (st, "Real-Time Clock (%s)\n\n", dptr->name);
 fprintf (st, "The real-time clock autocalibrates; the clock interval is adjusted up or down\n");
 fprintf (st, "so that the clock tracks actual elapsed time.\n\n");
+fprintf (st, "The TODR (Time Of Day Register) is a 32 bit register that counts up once every\n");
+fprintf (st, "10 milliseconds of wall clock time.  At the 10 millisecond rate, the 32 bit\n");
+fprintf (st, "value will overflow after approximately 16 months.  The operating system\n");
+fprintf (st, "running on the machine generally keeps track of when the system date/time has\n");
+fprintf (st, "been set and thus can use the system's known base time plus the current TODR\n");
+fprintf (st, "value to provide the correct current date/time.\n\n");
 fprintf (st, "There are two modes of TODR operation:\n\n");
 fprintf (st, "   Default VMS mode.  Without initializing the TODR it returns the current\n");
 fprintf (st, "                      time of year offset which VMS would set the clock to\n");
@@ -903,7 +923,7 @@ base.tv_sec = (time_t)toy->toy_gmtbase;
 base.tv_nsec = toy->toy_gmtbasemsec * 1000000;
 sim_timespec_diff (&val, &now, &base);                  /* val = now - base */
 sim_debug (TMR_DB_TODR, &clk_dev, "todr_rd() - TODR=0x%X - %s\n", (int32)(val.tv_sec*100 + val.tv_nsec/10000000), todr_fmt_vms_todr ((int32)(val.tv_sec*100 + val.tv_nsec/10000000)));
-return (int32)(val.tv_sec*100 + val.tv_nsec/10000000);  /* 100hz Clock Ticks */
+return (int32)(val.tv_sec*100 + (val.tv_nsec + 5000000)/10000000);  /* 100hz Clock rounded Ticks */
 }
 
 void todr_wr (int32 data)
@@ -921,7 +941,12 @@ val.tv_nsec = (((uint32)data) % 100) * 10000000;
 sim_timespec_diff (&base, &now, &val);                  /* base = now - data */
 toy->toy_gmtbase = (uint32)base.tv_sec;
 tbase = (time_t)base.tv_sec;
-toy->toy_gmtbasemsec = base.tv_nsec/1000000;
+toy->toy_gmtbasemsec = (base.tv_nsec + 500000)/1000000;
+if (clk_unit.flags & UNIT_ATT) {                        /* OS Agnostic mode? */
+    rewind (clk_unit.fileref);
+    fwrite (toy, sizeof (*toy), 1, clk_unit.fileref);   /* Save sync time info */
+    fflush (clk_unit.fileref);
+    }
 sim_debug (TMR_DB_TODR, &clk_dev, "todr_wr(0x%X) - %s - GMTBASE=%8.8s.%03d\n", data, todr_fmt_vms_todr (data), 11+ctime(&tbase), (int)(base.tv_nsec/1000000));
 }
 
@@ -951,7 +976,7 @@ else {                                                  /* Not-Attached means */
             ctm->tm_min) * 60) +
             ctm->tm_sec;
     todr_wr ((base * 100) + 0x10000000 +                /* use VMS form */
-             (int32)(now.tv_nsec / 10000000));
+             (int32)((now.tv_nsec + 5000000)/ 10000000));
     }
 return SCPE_OK;
 }
@@ -1211,12 +1236,36 @@ tti_buf = FL_CPROT;                                     /* status */
 fl_state = FL_IDLE;                                     /* floppy idle */
 }
 
+/* Attach routine */
+
+t_stat fl_attach (UNIT *uptr, CONST char *cptr)
+{
+return sim_disk_attach (uptr, cptr, FL_NUMBY,
+                        sizeof (uint8), TRUE, 0,
+                        "RX01", 0, 0);
+}
+
+t_stat fl_detach (UNIT *uptr)
+{
+sim_cancel (uptr);
+return sim_disk_detach (uptr);
+}
+
+
 /* Reset */
 
 t_stat fl_reset (DEVICE *dptr)
 {
 uint32 i;
 extern int32 sys_model;
+static t_bool inited = FALSE;
+
+if (!inited) {
+    inited = TRUE;
+    dptr->units->action = &fl_svc;
+    dptr->units->flags = UNIT_FIX|UNIT_ATTABLE|UNIT_BUFABLE|UNIT_MUSTBUF;
+    sim_disk_set_drive_type_by_name (dptr->units, "RX01");
+    }
 
 fl_esr = FL_STAINC;
 fl_ecode = 0;                                           /* clear error */

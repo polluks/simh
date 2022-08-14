@@ -166,9 +166,6 @@ const char *fl_fncnames[] = {
 #define FL_NUMBY        512                             /* bytes/sector */
 #define FL_INTL         5                               /* interleave */
 #define FL_SIZE         (FL_NUMTR * FL_NUMSC * FL_NUMBY)/* bytes/disk */
-#define UNIT_V_WLK      (UNIT_V_UF)                     /* write locked */
-#define UNIT_WLK        (1u << UNIT_V_UF)
-#define UNIT_WPRT       (UNIT_WLK | UNIT_RO)            /* write protect */
 
 #define TRACK u3                                        /* current track */
 #define CALC_SC(t,s)    (fl_intl[((t) - 1) % FL_INTL][((s) - 1)])
@@ -424,8 +421,10 @@ REG fl_reg[] = {
     };
 
 MTAB fl_mod[] = {
-    { UNIT_WLK,         0, "write enabled",  "WRITEENABLED", NULL, NULL, NULL, "Write enable floppy drive" },
-    { UNIT_WLK,  UNIT_WLK, "write locked",   "LOCKED", NULL, NULL, NULL, "Write lock floppy drive"  },
+    { MTAB_XTD|MTAB_VUN, 0, "write enabled", "WRITEENABLED", 
+        &set_writelock, &show_writelock,   NULL, "Write enable floppy drive" },
+    { MTAB_XTD|MTAB_VUN, 1, NULL, "LOCKED", 
+        &set_writelock, NULL,   NULL, "Write lock floppy drive" },
     { 0 }
     };
 
@@ -662,7 +661,7 @@ if ((val & TMR_CSR_RUN) == 0) {                         /* clearing run? */
     sim_cancel (&tmr_unit);                             /* cancel timer */
     }
 if ((val & CSR_DONE) &&                                 /* Interrupt Acked? */
-    (10000 == (tmr_nicr) ? (~tmr_nicr + 1) : 0xFFFFFFFF))/* of 10ms tick */
+    (10000 == (tmr_nicr ? (~tmr_nicr + 1) : 0xFFFFFFFF)))/* of 10ms tick */
     sim_rtcn_tick_ack (20, TMR_CLK);                    /* Let timers know */
 tmr_iccs = tmr_iccs & ~(val & TMR_CSR_W1C);             /* W1C csr */
 tmr_iccs = (tmr_iccs & ~TMR_CSR_WR) |                   /* new r/w */
@@ -768,10 +767,12 @@ else
 
 t_stat clk_reset (DEVICE *dptr)
 {
-if (clk_unit.filebuf == NULL) {                         /* make sure the TODR is initialized */
-    clk_unit.filebuf = calloc(sizeof(TOY), 1);
+if ((clk_unit.filebuf == NULL) ||                       /* make sure the TODR is initialized */
+    (sim_switches & SWMASK ('P'))) {
+    clk_unit.filebuf = realloc(clk_unit.filebuf, sizeof(TOY));
     if (clk_unit.filebuf == NULL)
         return SCPE_MEM;
+    memset (clk_unit.filebuf, 0, sizeof(TOY));
     }
 todr_resync ();
 if (clk_unit.flags & UNIT_ATT)              /* battery backup hooked up? */
@@ -785,8 +786,8 @@ return SCPE_OK;
 
 t_stat clk_svc (UNIT *uptr)
 {
-sim_activate_after (uptr, 10000);
 tmr_poll = sim_rtcn_calb (100, TMR_CLK);
+sim_activate_after (uptr, 10000);
 tmxr_poll = tmr_poll * TMXR_MULT;                       /* set mux poll */
 return SCPE_OK;
 }
@@ -796,6 +797,12 @@ t_stat clk_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cpt
 fprintf (st, "Real-Time Clock (%s)\n\n", dptr->name);
 fprintf (st, "The real-time clock autocalibrates; the clock interval is adjusted up or down\n");
 fprintf (st, "so that the clock tracks actual elapsed time.\n\n");
+fprintf (st, "The TODR (Time Of Day Register) is a 32 bit register that counts up once every\n");
+fprintf (st, "10 milliseconds of wall clock time.  At the 10 millisecond rate, the 32 bit\n");
+fprintf (st, "value will overflow after approximately 16 months.  The operating system\n");
+fprintf (st, "running on the machine generally keeps track of when the system date/time has\n");
+fprintf (st, "been set and thus can use the system's known base time plus the current TODR\n");
+fprintf (st, "value to provide the correct current date/time.\n\n");
 fprintf (st, "There are two modes of TODR operation:\n\n");
 fprintf (st, "   Default VMS mode.  Without initializing the TODR it returns the current\n");
 fprintf (st, "                      time of year offset which VMS would set the clock to\n");
@@ -938,7 +945,7 @@ base.tv_sec = toy->toy_gmtbase;
 base.tv_nsec = toy->toy_gmtbasemsec * 1000000;
 sim_timespec_diff (&val, &now, &base);
 sim_debug (TMR_DB_TODR, &clk_dev, "todr_rd() - TODR=0x%X - %s\n", (int32)(val.tv_sec*100 + val.tv_nsec/10000000), todr_fmt_vms_todr ((int32)(val.tv_sec*100 + val.tv_nsec/10000000)));
-return (int32)(val.tv_sec*100 + val.tv_nsec/10000000);  /* 100hz Clock Ticks */
+return (int32)(val.tv_sec*100 + (val.tv_nsec + 5000000)/10000000);  /* 100hz Clock rounded Ticks */
 }
 
 void todr_wr (int32 data)
@@ -956,7 +963,12 @@ val.tv_nsec = (((uint32)data) % 100) * 10000000;
 sim_timespec_diff (&base, &now, &val);                  /* base = now - data */
 toy->toy_gmtbase = (uint32)base.tv_sec;
 tbase = (time_t)base.tv_sec;
-toy->toy_gmtbasemsec = base.tv_nsec/1000000;
+toy->toy_gmtbasemsec = (base.tv_nsec + 500000)/1000000;
+if (clk_unit.flags & UNIT_ATT) {                        /* OS Agnostic mode? */
+    rewind (clk_unit.fileref);
+    fwrite (toy, sizeof (*toy), 1, clk_unit.fileref);   /* Save sync time info */
+    fflush (clk_unit.fileref);
+    }
 sim_debug (TMR_DB_TODR, &clk_dev, "todr_wr(0x%X) - %s - GMTBASE=%8.8s.%03d\n", data, todr_fmt_vms_todr (data), 11+ctime(&tbase), (int)(base.tv_nsec/1000000));
 }
 
@@ -986,7 +998,7 @@ else {                                                  /* Not-Attached means */
             ctm->tm_min) * 60) +
             ctm->tm_sec;
     todr_wr ((base * 100) + 0x10000000 +                /* use VMS form */
-             (int32)(now.tv_nsec / 10000000));
+             (int32)((now.tv_nsec + 5000000)/ 10000000));
     }
 return SCPE_OK;
 }
@@ -1207,8 +1219,6 @@ return FALSE;
 
 t_stat fl_reset (DEVICE *dptr)
 {
-extern int32 sys_model;
-
 fl_ecode = 0;                                           /* clear error */
 fl_sector = 0;                                          /* clear addr */
 fl_track = 0;

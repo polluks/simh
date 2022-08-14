@@ -46,7 +46,6 @@
 
 #include "i7010_defs.h"
 #include "sim_card.h"
-#include <time.h>
 
 #define UNIT_V_MSIZE    (UNIT_V_UF + 0)
 #define UNIT_MSIZE      (017 << UNIT_V_MSIZE)
@@ -562,12 +561,12 @@ sim_instr(void)
     t_stat              reason;
     uint16              t;
     int                 temp;
-    int32               STAR;
+    int32               STAR = 0;
     uint8               op, op_info;
     int                 state;
-    uint8               ix;
+    uint8               ix = 0;
     uint8               br;
-    uint8               ar;
+    uint8               ar = 0;
     int                 sign, qsign;
     uint8               ch;
     int                 cy;
@@ -1528,7 +1527,7 @@ sim_instr(void)
                          struct tm    *tptr;
 
                              temp = 99999;
-                             curtim = time(NULL);        /* get time */
+                             curtim = sim_get_time(NULL);/* get time */
                              tptr = localtime(&curtim);  /* decompose */
                              if (tptr != NULL && tptr->tm_sec != 59) {
                                   /* Convert minutes to 100th hour */
@@ -3759,9 +3758,7 @@ do_divide()
 t_stat
 rtc_srv(UNIT * uptr)
 {
-    int32         t;
-
-    t = sim_rtcn_calb (rtc_tps, TMR_RTC);
+    (void)sim_rtcn_calb (rtc_tps, TMR_RTC);
     sim_activate_after(uptr, 1000000/rtc_tps);
 
     if (timer_enable) {

@@ -23,7 +23,6 @@
    specific to the MIT AI lab PDP-10.
 */
 
-#include <time.h>
 #include "kx10_defs.h"
 
 #ifdef USE_DISPLAY
@@ -149,6 +148,11 @@ static int stk_modifiers (SIM_KEY_EVENT *kev)
 
 static int stk_keys (SIM_KEY_EVENT *kev)
 {
+  if (kev->state == SIM_KEYPRESS_UP && kev->key == SIM_KEY_F11) {
+    vid_set_fullscreen (!vid_is_fullscreen ());
+    return 1;
+  }
+
   if (kev->state == SIM_KEYPRESS_UP)
     return 0;
 
@@ -359,8 +363,6 @@ static t_stat stk_svc (UNIT *uptr)
 
 t_stat stk_devio(uint32 dev, uint64 *data)
 {
-    DEVICE *dptr = &stk_dev;
-
     switch(dev & 07) {
     case CONO:
         status &= ~STK_PIA;

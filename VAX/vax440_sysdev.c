@@ -31,7 +31,6 @@
 
 #include "vax_defs.h"
 #include "sim_ether.h"
-#include <time.h>
 
 #ifdef DONT_USE_INTERNAL_ROM
 #if defined (VAX_46)
@@ -1052,7 +1051,7 @@ if (MATCH_CMD(gbuf, "MICROVAX") == 0) {
     vs_dev.flags = vs_dev.flags | DEV_DIS;               /* disable mouse */
 #endif
     strcpy (sim_name, "MicroVAX 3100-80 (KA47)");
-    reset_all (0);                                       /* reset everything */
+    reset_all_p (0);                                     /* powerup reset everything */
     }
 #if defined (VAX_46) || defined (VAX_48)
 else if (MATCH_CMD(gbuf, "VAXSTATION") == 0) {
@@ -1065,7 +1064,7 @@ else if (MATCH_CMD(gbuf, "VAXSTATION") == 0) {
 #else   /* VAX_48 */
     strcpy (sim_name, "VAXstation 4000-VLC (KA48)");
 #endif
-    reset_all (0);                                       /* reset everything */
+    reset_all_p (0);                                     /* powerup reset everything */
 #else
     return sim_messagef (SCPE_ARG, "Simulator built without Graphic Device Support\n");
 #endif
@@ -1078,14 +1077,18 @@ return SCPE_OK;
 
 t_stat cpu_print_model (FILE *st)
 {
+const char *model = "";
+
 fprintf (st, "%s", sim_name);
 #if defined (VAX_46)
-fprintf (st, "VAXstation 4000-60 (KA46)");
+model = "VAXstation 4000-60 (KA46)";
 #elif defined (VAX_47)
-fprintf (st, "MicroVAX 3100-80 (KA47)");
+model = "MicroVAX 3100-80 (KA47)";
 #elif defined (VAX_48)
-fprintf (st, "VAXstation 4000-VLC (KA48)");
+model = "VAXstation 4000-VLC (KA48)";
 #endif
+if (strcmp (sim_name, model) != 0)
+    fprintf (st, "%s", model);
 return SCPE_OK;
 }
 

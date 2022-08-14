@@ -238,7 +238,7 @@ DEVICE ve_dev = {
     2, 10, 31, 1, DEV_RDX, 8,
     NULL, NULL, &ve_reset,
     NULL, NULL, &ve_detach,
-    &ve_dib, DEV_DIS | DEV_DEBUG, 0,
+    &ve_dib, DEV_DIS | DEV_DEBUG | DEV_DISPLAY, 0,
     ve_debug, NULL, NULL, &ve_help, NULL, NULL,
     &ve_description
     };
@@ -474,6 +474,8 @@ if (tbc_fifo[id].count < FIFO_LEN) {
         tbc_fifo[id].get_ptr = 0;
     tbc_fifo[id].count = tbc_fifo[id].count + 4;
     }
+else
+    *data = 0;
 }
 
 void ve_clear_fifo (uint32 id)
@@ -1458,6 +1460,7 @@ if (!vid_active && !ve_active)  {
     ve_lines = (uint32 *) calloc (VE_XSIZE*VE_YSIZE, sizeof (uint32));
     if (ve_lines == NULL) {
         free (ve_buf);
+        ve_buf = NULL;
         vid_close ();
         return SCPE_MEM;
         }

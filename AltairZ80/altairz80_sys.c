@@ -68,6 +68,8 @@ extern DEVICE hdc1001_dev;
 
 extern DEVICE jade_dev;
 extern DEVICE tarbell_dev;
+extern DEVICE icom_dev;
+extern DEVICE dj2d_dev;
 extern DEVICE m2sio0_dev;
 extern DEVICE m2sio1_dev;
 extern DEVICE pmmi_dev;
@@ -127,6 +129,10 @@ DEVICE      *sim_devices[]  = {
     &jade_dev,
     /* Tarbell Devices */
     &tarbell_dev,
+    /* iCOM Devices */
+    &icom_dev,
+    /* Disk Jockey 2D Devices */
+    &dj2d_dev,
     /* MITS 88-2SIO */
     &m2sio0_dev,
     &m2sio1_dev,
@@ -145,7 +151,7 @@ DEVICE      *sim_devices[]  = {
 
 static char memoryAccessMessage[256];
 static char instructionMessage[256];
-const char *sim_stop_messages[] = {
+const char *sim_stop_messages[SCPE_BASE] = {
     "HALT instruction",
     "Breakpoint",
     memoryAccessMessage,

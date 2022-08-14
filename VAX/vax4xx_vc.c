@@ -168,7 +168,7 @@ DEVICE vc_dev = {
     1, 10, 31, 1, DEV_RDX, 8,
     NULL, NULL, &vc_reset,
     NULL, NULL, &vc_detach,
-    NULL, DEV_DEBUG | DEV_DIS, 0,
+    NULL, DEV_DEBUG | DEV_DIS | DEV_DISPLAY, 0,
     vc_debug, NULL, NULL, &vc_help, NULL, NULL, 
     &vc_description
     };
@@ -509,6 +509,7 @@ if (!vid_active && !vc_active)  {
     vc_lines = (uint32 *) calloc (VC_XSIZE * VC_YSIZE, sizeof (uint32));
     if (vc_lines == NULL) {
         free (vc_buf);
+        vc_buf = NULL;
         vid_close ();
         return SCPE_MEM;
         }

@@ -289,7 +289,7 @@ DEVICE va_dev = {
     3, DEV_RDX, 20, 1, DEV_RDX, 8,
     NULL, NULL, &va_reset,
     NULL, NULL, NULL,
-    &va_dib, DEV_DIS | DEV_QBUS | DEV_DEBUG, 0,
+    &va_dib, DEV_DIS | DEV_QBUS | DEV_DEBUG | DEV_DISPLAY, 0,
     va_debug, NULL, NULL, &va_help, NULL, NULL,
     &va_description
     };
@@ -481,7 +481,6 @@ return data;
 void va_dga_wr (int32 pa, int32 val, int32 lnt)
 {
 int32 rg = (pa >> 1) & 0xFF;
-uint32 addr = VA_FFO_OF;
 
 if (rg <= DGA_MAXREG)
     sim_debug (DBG_DGA, &va_dev, "dga_wr: %s, %X from PC %08X\n", va_dga_rgd[rg], val, fault_PC);
@@ -552,7 +551,6 @@ int32 va_mem_rd (int32 pa)
 {
 int32 rg = (pa >> 1) & 0x7FFF;
 int32 data;
-UNIT *uptr = &va_dev.units[0];
 uint16 *qr = (uint16*) vax_vcb02_bin;
 
 if (rg >= VA_RSV_OF) {
@@ -1121,6 +1119,7 @@ if (!vid_active)  {
     va_lines = (uint32 *) calloc (VA_XSIZE * VA_YSIZE, sizeof (uint32));
     if (va_lines == NULL) {
         free (va_buf);
+        va_buf = NULL;
         vid_close ();
         return SCPE_MEM;
         }

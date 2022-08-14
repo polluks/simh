@@ -53,7 +53,6 @@
 #include "besm6_defs.h"
 #include <math.h>
 #include <float.h>
-#include <time.h>
 
 
 t_value memory [MEMSIZE];
@@ -74,7 +73,7 @@ int32 tmr_poll = CLK_DELAY;             /* pgm timer poll */
                         GRP_CHAN5_FREE | GRP_CHAN6_FREE |\
                         GRP_CHAN7_FREE )
 
-#define PRP_WIRED_BITS (PRP_UVVK1_END | PRP_UVVK2_END |\
+#define PRP_WIRED_BITS (PRP_VU1_END | PRP_VU2_END |\
                         PRP_PCARD1_PUNCH | PRP_PCARD2_PUNCH |\
                         PRP_PTAPE1_PUNCH | PRP_PTAPE2_PUNCH )
 
@@ -274,17 +273,21 @@ DEVICE *sim_devices[] = {
     &cpu_dev,
     &reg_dev,
     &drum_dev,
-    &disk_dev,
+    md_dev, md_dev + 1, md_dev + 2, md_dev + 3,
+    md_dev + 4, md_dev + 5, md_dev + 6, md_dev + 7,
+    mg_dev, mg_dev + 1, mg_dev + 2, mg_dev + 3,
     &mmu_dev,
     &clock_dev,
     &printer_dev,
     &fs_dev,
+    &pl_dev,
+    &vu_dev,
     &pi_dev,
     &tty_dev,       /* терминалы - телетайпы, видеотоны, "Консулы" */
     0
 };
 
-const char *sim_stop_messages[] = {
+const char *sim_stop_messages[SCPE_BASE] = {
     "Неизвестная ошибка",                 /* Unknown error */
     "Останов",                            /* STOP */
     "Точка останова",                     /* Emulator breakpoint */
@@ -362,7 +365,7 @@ t_stat cpu_reset (DEVICE *dptr)
         M[i] = 0;
 
     /* Punchcard readers not yet implemented thus not ready */
-    READY2 |= 042000000;
+    /* READY2 |= 042000000; */
 
     /* Регистр 17: БлП, БлЗ, ПОП, ПОК, БлПр */
     M[PSW] = PSW_MMAP_DISABLE | PSW_PROT_DISABLE | PSW_INTR_HALT |
@@ -568,8 +571,11 @@ static void cmd_033 ()
          * с магнитными дисками */
         disk_io (Aex - 3, (uint32) ACC);
         break;
-    case 5: case 6: case 7:
-        /* TODO: управление обменом с магнитными лентами */
+    case 5: case 6:
+        /* управление обменом с магнитными лентами */
+        mg_io (Aex - 3, (uint32) ACC);
+        break;
+    case 7:
         longjmp (cpu_halt, STOP_UNIMPLEMENTED);
         break;
     case 010: case 011:
@@ -626,7 +632,7 @@ static void cmd_033 ()
         break;
     case 0141:
         /* TODO: formatting magnetic tape */
-        longjmp (cpu_halt, STOP_UNIMPLEMENTED);
+        mg_format ((uint32) ACC);
         break;
     case 0142:
         /* TODO: имитация сигналов прерывания ПРП */
@@ -638,8 +644,8 @@ static void cmd_033 ()
          */
         break;
     case 0150: case 0151:
-        /* TODO: reading from punchcards */
-        longjmp (cpu_halt, STOP_UNIMPLEMENTED);
+        /* sending commands to the punched card readers */
+        vu_control (Aex - 0150, (uint32) (ACC & 017));
         break;
     case 0153:
         /* гашение аппаратуры сопряжения с терминалами */
@@ -658,8 +664,11 @@ static void cmd_033 ()
         pi_write (Aex & 7, (uint32) ACC & BITS(20));
         break;
     case 0170: case 0171:
-        /* TODO: пробивка строки на перфоленте */
-        longjmp (cpu_halt, STOP_UNIMPLEMENTED);
+        /* пробивка строки на перфоленте */
+        pl_control (Aex & 1, (uint32) ACC & BITS(8));
+        break;
+    case 0172: case 0173:
+        besm6_debug(">>> Potential plotter output: %03o", (uint32) ACC & BITS(8));
         break;
     case 0174: case 0175:
         /* Выдача кода в пульт оператора */
@@ -716,7 +725,7 @@ static void cmd_033 ()
         break;
     case 04035:
         /* Опрос триггера ОШМi - наличие ошибок при внешнем обмене. */
-        ACC = drum_errors() | disk_errors();
+        ACC = drum_errors() | disk_errors() | mg_errors();
         break;
     case 04100:
         /* Опрос телеграфных каналов связи */
@@ -728,18 +737,21 @@ static void cmd_033 ()
         ACC = READY2;
         break;
     case 04103: case 04104: case 04105: case 04106:
-        /* Опрос состояния лентопротяжных механизмов.
-         * Все устройства не готовы. */
-        ACC = BITS(24);
+        /* Опрос состояния лентопротяжных механизмов. */
+        ACC = mg_state (Aex - 04103);
         break;
     case 04107:
-        /* TODO: опрос схемы контроля записи на МЛ */
-        longjmp (cpu_halt, STOP_UNIMPLEMENTED);
+        /* опрос схемы контроля записи на МЛ */
+        ACC = 0;
         break;
     case 04115:
         /* Неизвестное обращение. ДИСПАК выдаёт эту команду
          * группами по 8 штук каждые несколько секунд. */
         ACC = 0;
+        break;
+    case 04150: case 04154:
+        /* считывание строки с устройства ввода с перфоленты */
+        ACC = vu_read ((Aex - 04150) >> 2);
         break;
     case 04160: case 04161: case 04162: case 04163:
     case 04164: case 04165: case 04166: case 04167:
@@ -764,7 +776,8 @@ static void cmd_033 ()
         if (0100 <= val && val <= 0137) {
             /* Управление лентопротяжными механизмами
              * и гашение разрядов регистров признаков
-             * окончания подвода зоны. Игнорируем. */
+             * окончания подвода зоны. */
+            mg_ctl(Aex - 0100, (uint32) ACC);
         } else if (04140 <= val && val <= 04157) {
             /* TODO: считывание строки перфокарты */
             longjmp (cpu_halt, STOP_UNIMPLEMENTED);
@@ -819,7 +832,7 @@ void check_initial_setup ()
         /* Яч. ГОД обновляем самостоятельно */
         time_t t;
         t_value date;
-        time(&t);
+        sim_get_time(&t);
         d = localtime(&t);
         ++d->tm_mon;
         date = (t_value) (d->tm_mday / 10) << 33 |

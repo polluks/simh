@@ -43,6 +43,14 @@
 
 #if (NUM_DEVS_MT > 0)
 
+#if KL
+#define MT_DIS DEV_DIS
+#endif
+
+#ifndef MT_DIS
+#define MT_DIS 0
+#endif
+
 #define BUF_EMPTY(u)  (u->hwmark == 0xFFFFFFFF)
 #define CLR_BUF(u)     u->hwmark = 0xFFFFFFFF
 
@@ -214,7 +222,6 @@ REG                 mt_reg[] = {
     {ORDATA(DEVNUM, mt_df10.devnum, 9), REG_HRO},
     {ORDATA(BUF, mt_df10.buf, 36), REG_HRO},
     {ORDATA(NXM, mt_df10.nxmerr, 8), REG_HRO},
-    {ORDATA(COMP, mt_df10.ccw_comp, 8), REG_HRO},
     {0}
 };
 
@@ -222,7 +229,7 @@ DEVICE              mt_dev = {
     "MTA", mt_unit, mt_reg, mt_mod,
     8, 8, 15, 1, 8, 8,
     NULL, NULL, &mt_reset, &mt_boot, &mt_attach, &mt_detach,
-    &mt_dib, DEV_DISABLE | DEV_DEBUG | DEV_TAPE, 0, dev_debug,
+    &mt_dib, DEV_DISABLE | DEV_DEBUG | DEV_TAPE | MT_DIS, 0, dev_debug,
     NULL, NULL, &mt_help, NULL, NULL, &mt_description
 };
 
@@ -379,7 +386,7 @@ t_stat mt_devio(uint32 dev, uint64 *data) {
           if ((dptr->flags & MTDF_TYPEB) == 0)
               res |= WT_CW_DONE|DATA_PARITY|NXM_ERR|CW_PAR_ERR;
 #if KI_22BIT
-          if (dptr->flags & MTDF_TYPEB)
+          if (dptr->flags & MTDF_TYPEB && cpu_unit[0].flags & UNIT_DF10C)
               res |= B22_FLAG;
 #endif
           *data = res;
@@ -397,8 +404,10 @@ t_stat mt_devio(uint32 dev, uint64 *data) {
               mt_hold_reg ^= mt_df10.buf;
           }
           if (dptr->flags & MTDF_TYPEB) {
-              if (*data & 04)
+              if (*data & 04) {
                   df10_writecw(&mt_df10);
+                  mt_status |= WT_CW_DONE;
+              }
               if (*data & 010)
                   mt_status &= ~(WT_CW_DONE);
           }
@@ -412,9 +421,10 @@ t_stat mt_devio(uint32 dev, uint64 *data) {
 
      case DATAO|04:
           /* Set Initial CCW */
-          if (dptr->flags & MTDF_TYPEB)
+          if (dptr->flags & MTDF_TYPEB) {
               df10_setup(&mt_df10, (uint32) *data);
-          else
+              mt_status &= ~(WT_CW_DONE);
+          } else
               mt_df10.buf ^= mt_hold_reg;
           sim_debug(DEBUG_DATAIO, dptr, "MT DATAO %03o %012llo\n", dev, *data);
           break;
@@ -532,8 +542,8 @@ t_stat mt_error(UNIT * uptr, t_stat r, DEVICE * dptr)
 /* Handle processing of tape requests. */
 t_stat mt_srv(UNIT * uptr)
 {
-    DEVICE             *dptr = find_dev_from_unit(uptr);
-    int                 unit = (uptr - dptr->units) & 7;
+    DEVICE             *dptr = uptr->dptr;
+    int                 unit;
     int                 cmd = (uptr->CNTRL & FUNCTION) >> 9;
     t_mtrlnt            reclen;
     t_stat              r = SCPE_ARG;   /* Force error if not set */
@@ -557,6 +567,10 @@ t_stat mt_srv(UNIT * uptr)
        cc_max = (4 + ((uptr->CNTRL & CORE_DUMP) != 0));
     }
 
+    if (dptr == NULL)
+        dptr = find_dev_from_unit(uptr);
+
+    unit = (uptr - dptr->units) & 7;
     switch(cmd) {
     case NOP_IDLE:
         sim_debug(DEBUG_DETAIL, dptr, "MT%o Idle\n", unit);
@@ -725,7 +739,7 @@ t_stat mt_srv(UNIT * uptr)
             }
             uptr->BPOS++;
             uptr->CPOS++;
-            if (uptr->BPOS == uptr->hwmark)
+            if (uptr->BPOS == (int32)uptr->hwmark)
                 uptr->CNTRL |= MT_LASTWD;
             if (uptr->CPOS == cc_max) {
                uptr->CPOS = 0;
@@ -1023,9 +1037,7 @@ mt_reset(DEVICE * dptr)
         uptr->CNTRL = 0;
         sim_cancel(uptr);
     }
-    mt_df10.devnum = mt_dib.dev_num;
-    mt_df10.nxmerr = 24;
-    mt_df10.ccw_comp = 25;
+    df10_init(&mt_df10, mt_dib.dev_num, 24);
     mt_pia = 0;
     mt_status = 0;
     mt_sel_unit = 0;

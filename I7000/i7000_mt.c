@@ -238,10 +238,10 @@ UNIT                mta_unit[] = {
 };
 
 MTAB                mt_mod[] = {
-    {MTUF_WLK, 0, "write enabled", "WRITEENABLED", NULL, NULL, NULL,
-       "Write ring in place"},
-    {MTUF_WLK, MTUF_WLK, "write locked", "LOCKED", NULL, NULL, NULL,
-       "No write ring in place"},
+    { MTAB_XTD|MTAB_VUN, 0, "write enabled", "WRITEENABLED", 
+        &set_writelock, &show_writelock,   NULL, "Write ring in place" },
+    { MTAB_XTD|MTAB_VUN, 1, NULL, "LOCKED", 
+        &set_writelock, NULL,   NULL, "no Write ring in place" },
     {MTUF_LDN, 0, "high density", "HIGH", &mt_tape_density, NULL, NULL,
         "556 BPI"},
     {MTUF_LDN, MTUF_LDN, "low density", "LOW", &mt_tape_density, NULL, NULL,
@@ -849,7 +849,7 @@ t_stat mt_srv(UNIT * uptr)
             return mt_error(uptr, chan, MTSE_TMK, dptr);
         }
         /* If at end of record, fill buffer */
-        if (uptr->u6 == uptr->hwmark) {
+        if (uptr->u6 == (int32)uptr->hwmark) {
             sim_debug(DEBUG_DETAIL, dptr, "Read unit=%d ", unit);
             uptr->u3 += GAP_LEN;
             if ((r = sim_tape_rdrecf(uptr, &mt_buffer[bufnum][0], &reclen,
@@ -1044,7 +1044,7 @@ t_stat mt_srv(UNIT * uptr)
             return mt_error(uptr, chan, MTSE_TMK, dptr);
         }
         /* If at end of record, fill buffer */
-        if (uptr->u6 == uptr->hwmark) {
+        if (uptr->u6 == (int32)uptr->hwmark) {
             sim_debug(DEBUG_DETAIL, dptr, "Read unit=%d ", unit);
             if ((r = sim_tape_rdrecr(uptr, &mt_buffer[bufnum][0], &reclen,
                                 BUFFSIZE)) != MTSE_OK) {

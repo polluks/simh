@@ -24,7 +24,6 @@
    PDP-10.
 */
 
-#include <time.h>
 #include "sim_defs.h"
 #include "sim_tmxr.h"
 #include "kx10_defs.h"
@@ -130,7 +129,6 @@ static void dpk_set_ospeed (int port, uint64 data)
 static t_stat dpk_devio(uint32 dev, uint64 *data)
 {
     static int scan = 0;
-    DEVICE *dptr = &dpk_dev;
     int port;
 
     switch(dev & 07) {

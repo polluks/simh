@@ -150,9 +150,9 @@ return real_sim_os_ms_sleep (msec);
 t_bool sim_idle_enab = FALSE;                       /* global flag */
 volatile t_bool sim_idle_wait = FALSE;              /* global flag */
 
-int32 sim_vm_initial_ips = SIM_INITIAL_IPS;
+uint32 sim_vm_initial_ips = SIM_INITIAL_IPS;
 
-static int32 sim_precalibrate_ips = SIM_INITIAL_IPS;
+static uint32 sim_precalibrate_ips = SIM_INITIAL_IPS;
 static int32 sim_calb_tmr = -1;                     /* the system calibrated timer */
 static int32 sim_calb_tmr_last = -1;                /* shadow value when at sim> prompt */
 static double sim_inst_per_sec_last = 0;            /* shadow value when at sim> prompt */
@@ -1601,7 +1601,8 @@ while (*cptr != 0) {                                    /* do all mods */
         if (r != SCPE_OK)
             return r;
         }
-    else return SCPE_NOPARAM;
+    else
+        return sim_messagef (SCPE_NOPARAM, "Invalid timer parameter: %s\n", gbuf);
     }
 return SCPE_OK;
 }
@@ -1994,16 +1995,33 @@ switch (sim_throt_state) {
                     d_cps = (double) sim_throt_val * 1000.0;
                 else
                     d_cps = (sim_throt_peak_cps * sim_throt_val) / 100.0;
-            if (d_cps > a_cps) {
+            if (d_cps >= a_cps) {
+                /* the initial throttling calibration measures a slower cps rate than the desired cps rate, */
                 sim_debug (DBG_THR, &sim_timer_dev, "sim_throt_svc() CPU too slow.  Values a_cps = %f, d_cps = %f\n", 
                                                     a_cps, d_cps);
-                sim_throt_state = SIM_THROT_STATE_INIT;
-                sim_printf ("*********** WARNING ***********\n");
-                sim_printf ("Host CPU is too slow to simulate %s %s per second\n", sim_fmt_numeric(d_cps), sim_vm_interval_units);
-                sim_printf ("Host CPU can only simulate %s %s per second\n", sim_fmt_numeric(sim_throt_peak_cps), sim_vm_interval_units);
-                sim_printf ("Throttling disabled.\n");
-                sim_set_throt (0, NULL);
-                return SCPE_OK;
+                /* if the measured rate is well below the measured peak rate? */
+                if (sim_throt_peak_cps >= (2.0 * d_cps)) {
+                    /* distrust the measured rate and instead use half the peak rate as measured 
+                       cps rate. */
+                    sim_printf ("*********** WARNING ***********\n");
+                    sim_printf ("Host CPU could be too slow to simulate %s %s per second\n", sim_fmt_numeric(d_cps), sim_vm_interval_units);
+                    sim_printf ("Host CPU did only simulate %s %s per second\n", sim_fmt_numeric(a_cps), sim_vm_interval_units);
+                    sim_printf ("But peak rate was: %s %s per second\n", sim_fmt_numeric(sim_throt_peak_cps), sim_vm_interval_units);
+
+                    a_cps = (sim_throt_peak_cps / 2.0) + 1.0;
+
+                    sim_printf ("Assuming rate: %s %s per second\n", sim_fmt_numeric(a_cps), sim_vm_interval_units);
+                    }
+                else {
+                    sim_throt_state = SIM_THROT_STATE_INIT;
+                    sim_printf ("*********** WARNING ***********\n");
+                    sim_printf ("Host CPU is too slow to simulate %s %s per second\n", sim_fmt_numeric(d_cps), sim_vm_interval_units);
+                    sim_printf ("Host CPU did only simulate %s %s per second\n", sim_fmt_numeric(a_cps), sim_vm_interval_units);
+                    sim_printf ("Peak rate: %s %s per second\n", sim_fmt_numeric(sim_throt_peak_cps), sim_vm_interval_units);
+                    sim_printf ("Throttling disabled.\n");
+                    sim_set_throt (0, NULL);
+                    return SCPE_OK;
+                    }
                 }
             while (1) {
                 sim_throt_wait = (int32)                /* cycles between sleeps */
@@ -2182,10 +2200,26 @@ t_stat sim_timer_stop_svc (UNIT *uptr)
 return SCPE_STOP;
 }
 
+void sim_rtcn_debug_time (struct timespec *now)
+{
+clock_gettime (CLOCK_REALTIME, now);
+}
+
 void sim_rtcn_get_time (struct timespec *now, int tmr)
 {
 sim_debug (DBG_GET, &sim_timer_dev, "sim_rtcn_get_time(tmr=%d)\n", tmr);
 clock_gettime (CLOCK_REALTIME, now);
+}
+
+time_t sim_get_time (time_t *now)
+{
+struct timespec ts_now;
+
+sim_debug (DBG_GET, &sim_timer_dev, "sim_get_time()\n");
+sim_rtcn_get_time (&ts_now, 0);
+if (now)
+    *now = ts_now.tv_sec;
+return ts_now.tv_sec;
 }
 
 /* 
@@ -3446,10 +3480,12 @@ while (*cmd)
      exdep_cmd (EX_D, *(cmd++));
 sim_switches = saved_switches;
 sim_cancel (&SIM_INTERNAL_UNIT);
-sim_activate (&precalib_unit, sim_precalibrate_ips);
 start = sim_os_msec();
-sim_instr();
-end = sim_os_msec();
+do {
+    sim_activate (&precalib_unit, sim_precalibrate_ips);
+    sim_instr();
+    end = sim_os_msec();
+    } while ((end - start) < SIM_PRE_CALIBRATE_MIN_MS);
 sim_precalibrate_ips = (int32)(1000.0 * (sim_precalibrate_ips / (double)(end - start)));
 
 for (tmr=0; tmr<=SIM_NTIMERS; tmr++) {

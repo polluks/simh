@@ -1,6 +1,6 @@
 /* pdp11_tm.c: PDP-11 magnetic tape simulator
 
-   Copyright (c) 1993-2013, Robert M Supnik
+   Copyright (c) 1993-2022, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -25,6 +25,7 @@
 
    tm           TM11/TU10 magtape
 
+   26-Mar-22    RMS     Added extra case points for new MTSE definitions
    23-Oct-13    RMS     Revised for new boot setup routine
    16-Feb-06    RMS     Added tape capacity checking
    31-Oct-05    RMS     Fixed address width for large files
@@ -226,10 +227,10 @@ REG tm_reg[] = {
     };
 
 MTAB tm_mod[] = {
-    { MTUF_WLK,        0, "write enabled", "WRITEENABLED", 
-        &tm_vlock, NULL, NULL, "Write enable tape drive" },
-    { MTUF_WLK, MTUF_WLK, "write locked",  "LOCKED", 
-        &tm_vlock, NULL, NULL, "Write lock tape drive"  },
+    { MTAB_XTD|MTAB_VUN, 0, "write enabled", "WRITEENABLED", 
+        &set_writelock, &show_writelock,   NULL, "Write ring in place" },
+    { MTAB_XTD|MTAB_VUN, 1, NULL, "LOCKED", 
+        &set_writelock, NULL,   NULL, "no Write ring in place" },
     { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0, "FORMAT", "FORMAT",
       &sim_tape_set_fmt, &sim_tape_show_fmt, NULL, "Set/Display tape format (SIMH, E11, TPC, P7B, AWS, TAR)" },
     { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0,       "CAPACITY", "CAPACITY",
@@ -541,6 +542,7 @@ switch (st) {
     case MTSE_UNATT:                                    /* not attached */
         tm_sta = tm_sta | STA_ILL;
     case MTSE_OK:                                       /* no error */
+    default:                                            /* unknown error */
         return SCPE_IERR;
 
     case MTSE_TMK:                                      /* tape mark */

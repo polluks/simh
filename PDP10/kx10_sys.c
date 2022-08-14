@@ -42,6 +42,9 @@
    sim_load             binary loader
 */
 
+#if KS
+char sim_name[] = "KS-10";
+#endif
 #if KL
 char sim_name[] = "KL-10";
 #endif
@@ -62,7 +65,7 @@ int32 sim_emax = 1;
 
 DEVICE *sim_devices[] = {
     &cpu_dev,
-#if PDP6 | KA | KI
+#if PDP6 | KA | KI | KS
     &cty_dev,
 #endif
 #if KL
@@ -171,6 +174,9 @@ DEVICE *sim_devices[] = {
 #if (NUM_DEVS_III > 0)
     &iii_dev,
 #endif
+#if (NUM_DEVS_TV > 0)
+    &tv_dev,
+#endif
 #if NUM_DEVS_IMP > 0
     &imp_dev,
 #endif
@@ -179,6 +185,9 @@ DEVICE *sim_devices[] = {
 #endif
 #if NUM_DEVS_CH10 > 0
     &ch10_dev,
+#endif
+#if NUM_DEVS_CH11 > 0
+    &ch11_dev,
 #endif
 #if NUM_DEVS_IMX > 0
     &imx_dev,
@@ -212,10 +221,25 @@ DEVICE *sim_devices[] = {
 #if NUM_DEVS_AI > 0
     &ai_dev,
 #endif
+#if NUM_DEVS_DZ > 0
+    &dz_dev,
+#endif
+#if NUM_DEVS_TCU > 0
+    &tcu_dev,
+#endif
+#if NUM_DEVS_KMC > 0
+    &kmc_dev,
+#endif
+#if NUM_DEVS_DUP > 0
+    &dup_dev,
+#endif
+#if NUM_DEVS_DN > 0
+    &dn_dev,
+#endif
     NULL
     };
 
-const char *sim_stop_messages[] = {
+const char *sim_stop_messages[SCPE_BASE] = {
     "Unknown error",
     "HALT instruction",
     "Breakpoint",
@@ -232,7 +256,7 @@ DEBTAB              dev_debug[] = {
     {"DETAIL", DEBUG_DETAIL, "Show details about device"},
     {"EXP", DEBUG_EXP, "Show exception information"},
     {"CONI", DEBUG_CONI, "Show coni instructions"},
-    {"CONO", DEBUG_CONO, "Show coni instructions"},
+    {"CONO", DEBUG_CONO, "Show cono instructions"},
     {"DATAIO", DEBUG_DATAIO, "Show datai and datao instructions"},
     {0, 0}
 };
@@ -244,7 +268,7 @@ DEBTAB              crd_debug[] = {
     {"DETAIL", DEBUG_DETAIL, "Show details about device"},
     {"EXP", DEBUG_EXP, "Show exception information"},
     {"CONI", DEBUG_CONI, "Show coni instructions"},
-    {"CONO", DEBUG_CONO, "Show coni instructions"},
+    {"CONO", DEBUG_CONO, "Show cono instructions"},
     {"DATAIO", DEBUG_DATAIO, "Show datai and datao instructions"},
     {"CARD", DEBUG_CARD, "Show Card read/punches"},
     {0, 0}
@@ -277,26 +301,22 @@ t_stat load_dmp (FILE *fileref)
    char    *p;
    uint32  addr = 074;
    uint64  data;
-   int     high = 0;
+   uint32  high = 0;
 
-   while (fgets((char *)buffer, 80, fileref) != 0) {
-        p = (char *)buffer;
-        while (*p >= '0' && *p <= '7') {
-           data = 0;
-           while (*p >= '0' && *p <= '7') {
-               data = (data << 3) + *p - '0';
-               p++;
-           }
-           if (addr == 0135 && data != 0)
-               high = (uint32)(data & RMASK);
-           if (high != 0 && high == addr) {
-               addr = 0400000;
-               high = 0;
-           }
-           M[addr++] = data;
-           if (*p == ' ' || *p == '\t')
-               p++;
-        }
+   while (fgets(&buffer[0], 80, fileref) != 0) {
+      data = 0;
+      p = &buffer[0];
+      if (*p >= '0' && *p <= '7') {
+          for (; *p >= '0' && *p <= '7'; p++)
+              data = (data << 3) + *p - '0';
+          if (addr == 0135 && data != 0)
+             high = (uint32)(data & RMASK);
+          if (high != 0 && high == addr) {
+             addr = 0400000;
+             high = 0;
+          }
+          M[addr++] = data;
+      }
    }
    return SCPE_OK;
 }
@@ -459,80 +479,80 @@ t_stat load_sblk (FILE *fileref)
 #define RIM_EOF 0xFFFFFFFFFFFFFFFFLL
 uint64 getrimw (FILE *fileref)
 {
-int32 i, tmp;
-uint64 word;
+    int32 i, tmp;
+    uint64 word;
 
-word = 0;
-for (i = 0; i < 6;) {
-    if ((tmp = getc (fileref)) == EOF)
-        return RIM_EOF;
-    if (tmp & 0200) {
-        word = (word << 6) | ((uint64) tmp & 077);
-        i++;
+    word = 0;
+    for (i = 0; i < 6;) {
+        if ((tmp = getc (fileref)) == EOF)
+            return RIM_EOF;
+        if (tmp & 0200) {
+            word = (word << 6) | ((uint64) tmp & 077);
+            i++;
         }
     }
-return word;
+    return word;
 }
 #define TSTS(x) SMASK & (x)
 #define AOB(x) FMASK & ((x) + 01000001LL)
 t_stat load_rim (FILE *fileref)
 {
-uint64        count, cksm, data;
-t_bool        its_rim;
-uint32        pa;
-int32         op, i, ldrc;
+    uint64        count, cksm, data;
+    t_bool        its_rim;
+    uint32        pa;
+    int32         op, i, ldrc;
 
-data = getrimw (fileref);                               /* get first word */
-if ((data & AMASK) != 0)                                /* error? SA != 0? */
-    return SCPE_FMT;
-ldrc = 1 + (RMASK ^ ((int32) ((data >> 18) & RMASK)));  /* get loader count */
-if (ldrc == 016)                                        /* 16? RIM10B */
-    its_rim = FALSE;
-else if (ldrc == 017)                                   /* 17? ITS RIM */
-    its_rim = TRUE;
-else return SCPE_FMT;                                   /* unknown */
-
-for (i = 0; i < ldrc; i++) {                            /* skip the loader */
-    data = getrimw (fileref);
-    if (data == RIM_EOF)
+    data = getrimw (fileref);                           /* get first word */
+    if ((data & AMASK) != 0)                            /* error? SA != 0? */
         return SCPE_FMT;
-    }
+    ldrc = 1 + (RMASK ^ ((int32) ((data >> 18) & RMASK))); /* get loader count */
+    if (ldrc == 016)                                    /* 16? RIM10B */
+        its_rim = FALSE;
+    else if (ldrc == 017)                               /* 17? ITS RIM */
+        its_rim = TRUE;
+    else return SCPE_FMT;                               /* unknown */
 
-for ( ;; ) {                                            /* loop until JRST */
-    count = cksm = getrimw (fileref);                   /* get header */
-    if (count == RIM_EOF)                               /* read err? */
-        return SCPE_FMT;
-    if (TSTS (count)) {                                 /* hdr = IOWD? */
-        for ( ; TSTS (count); count = AOB (count)) {
-            data = getrimw (fileref);                   /* get data wd */
-            if (data == RIM_EOF)
-                return SCPE_FMT;
-            if (its_rim) {                              /* ITS RIM? */
-                cksm = (((cksm << 1) | (cksm >> 35))) & FMASK;
-                                                        /* add to rotated cksm */
-                pa = ((uint32) count) & RMASK;          /* store */
-                }
-            else {                                      /* RIM10B */
-                pa = ((uint32) count + 1) & RMASK;      /* store */
-                }
-            cksm = (cksm + data) & FMASK;               /* add to cksm */
-            M[pa] = data;
-            }                                           /* end for */
-        data = getrimw (fileref);                       /* get cksm */
+    for (i = 0; i < ldrc; i++) {                        /* skip the loader */
+        data = getrimw (fileref);
         if (data == RIM_EOF)
             return SCPE_FMT;
-        if (cksm != data)                               /* test cksm */
-            return SCPE_CSUM;
-        }                                               /* end if count */
-    else {
-        op = GET_OP (count);                            /* not IOWD */
-        if (op != OP_JRST)                              /* JRST? */
+    }
+
+    for ( ;; ) {                                        /* loop until JRST */
+        count = cksm = getrimw (fileref);               /* get header */
+        if (count == RIM_EOF)                           /* read err? */
             return SCPE_FMT;
-        PC = (uint32) count & RMASK;                    /* set PC */
-        break;
+        if (TSTS (count)) {                             /* hdr = IOWD? */
+            for ( ; TSTS (count); count = AOB (count)) {
+                data = getrimw (fileref);               /* get data wd */
+                if (data == RIM_EOF)
+                    return SCPE_FMT;
+                if (its_rim) {                          /* ITS RIM? */
+                    cksm = (((cksm << 1) | (cksm >> 35))) & FMASK;
+                                                        /* add to rotated cksm */
+                    pa = ((uint32) count) & RMASK;      /* store */
+                }
+                else {                                  /* RIM10B */
+                    pa = ((uint32) count + 1) & RMASK;  /* store */
+                }
+                cksm = (cksm + data) & FMASK;           /* add to cksm */
+                M[pa] = data;
+            }                                           /* end for */
+            data = getrimw (fileref);                   /* get cksm */
+            if (data == RIM_EOF)
+                return SCPE_FMT;
+            if (cksm != data)                           /* test cksm */
+                return SCPE_CSUM;
+        }                                               /* end if count */
+        else {
+            op = GET_OP (count);                        /* not IOWD */
+            if (op != OP_JRST)                          /* JRST? */
+                return SCPE_FMT;
+            PC = (uint32) count & RMASK;                /* set PC */
+            break;
         }                                               /* end else */
     }                                                   /* end for */
-return SCPE_OK;
+    return SCPE_OK;
 }
 
 
@@ -585,7 +605,7 @@ t_stat load_sav (FILE *fileref, int ftype)
         wc = (int32)(data >> 18);
         pa = (uint32) (data & RMASK);
         if (wc == (OP_JRST << 9)) {
-            printf("Start addr=%06o\n", pa);
+            sim_printf("Start addr=%06o\n", pa);
             PC = pa;
             return SCPE_OK;
         }
@@ -631,86 +651,86 @@ t_stat load_sav (FILE *fileref, int ftype)
 
 t_stat load_exe (FILE *fileref, int ftype)
 {
-uint64 data, dirbuf[DIRSIZ], pagbuf[PAG_SIZE], entbuf[2];
-int32 ndir, entvec, i, j, k, cont, bsz, bty, rpt, wc;
-int32 fpage, mpage;
-uint32 ma;
+    uint64 data, dirbuf[DIRSIZ], pagbuf[PAG_SIZE], entbuf[2];
+    int32 ndir, entvec, i, j, k, cont, bsz, bty, rpt, wc;
+    int32 fpage, mpage;
+    uint32 ma;
 
-ndir = entvec = 0;                                      /* no dir, entvec */
-cont = 1;
-do {
-    
-    wc = get_word(fileref, &data, ftype);
-    if (wc != 0)                                        /* error? */
-        return SCPE_FMT;
-    bsz = (int32) ((data & RMASK) - 1);                 /* get count */
-    if (bsz < 0)                                        /* zero? */
-        return SCPE_FMT;
-    bty = (int32) LRZ (data);                           /* get type */
-    switch (bty) {                                      /* case type */
+    ndir = entvec = 0;                                  /* no dir, entvec */
+    cont = 1;
+    do {
 
-    case EXE_DIR:                                       /* directory */
-        if (ndir != 0)                                  /* got one */
+        wc = get_word(fileref, &data, ftype);
+        if (wc != 0)                                    /* error? */
             return SCPE_FMT;
-        for (i = 0; i < bsz; i++) {
-             if (get_word(fileref, &dirbuf[i], ftype))
-                 return SCPE_FMT;
-        }
-        ndir = bsz;
-        break;
-
-    case EXE_PDV:                                       /* optional */
-        (void)sim_fseek (fileref, bsz * sizeof (uint64), SEEK_CUR);
-        break;
-
-    case EXE_VEC:                                       /* entry vec */
-        if (bsz != 2)                                   /* must be 2 wds */
+        bsz = (int32) ((data & RMASK) - 1);             /* get count */
+        if (bsz < 0)                                    /* zero? */
             return SCPE_FMT;
-        for (i = 0; i < bsz; i++) {
-             if (get_word(fileref, &entbuf[i], ftype))
-                 return SCPE_FMT;
-        }
-        entvec = bsz;
-        cont = 0;                                       /* stop */
-        break;
+        bty = (int32) LRZ (data);                       /* get type */
+        switch (bty) {                                  /* case type */
 
-    case EXE_END:                                       /* end */
-        if (bsz != 0)                                   /* must be hdr */
+        case EXE_DIR:                                   /* directory */
+            if (ndir != 0)                              /* got one */
+                return SCPE_FMT;
+            for (i = 0; i < bsz; i++) {
+                 if (get_word(fileref, &dirbuf[i], ftype))
+                     return SCPE_FMT;
+            }
+            ndir = bsz;
+            break;
+
+        case EXE_PDV:                                   /* optional */
+            (void)sim_fseek (fileref, bsz * sizeof (uint64), SEEK_CUR);
+            break;
+
+        case EXE_VEC:                                   /* entry vec */
+            if (bsz != 2)                               /* must be 2 wds */
+                return SCPE_FMT;
+            for (i = 0; i < bsz; i++) {
+                 if (get_word(fileref, &entbuf[i], ftype))
+                     return SCPE_FMT;
+            }
+            entvec = bsz;
+            cont = 0;                                   /* stop */
+            break;
+
+        case EXE_END:                                   /* end */
+            if (bsz != 0)                               /* must be hdr */
+                return SCPE_FMT;
+            cont = 0;                                   /* stop */
+            break;
+
+        default:
             return SCPE_FMT;
-        cont = 0;                                       /* stop */
-        break;
-
-    default:
-        return SCPE_FMT;
-        }                                               /* end switch */
+            }                                           /* end switch */
     } while (cont);                                     /* end do */
 
-for (i = 0; i < ndir; i = i + 2) {                      /* loop thru dir */
-    fpage = (int32) (dirbuf[i] & RMASK);                /* file page */
-    mpage = (int32) (dirbuf[i + 1] & RMASK);            /* memory page */
-    rpt = ((int32) ((dirbuf[i + 1] >> 27) + 1)) & 0777; /* repeat count */
-    for (j = 0; j < rpt; j++, mpage++) {                /* loop thru rpts */
-        if (fpage) {                                    /* file pages? */
-            (void)sim_fseek (fileref, (fpage << PAG_V_PN) * 5, SEEK_SET);
-            for (k = 0; k < PAG_SIZE; k++) {
-                 if (get_word(fileref, &pagbuf[k], ftype))
-                     break;
+    for (i = 0; i < ndir; i = i + 2) {                  /* loop thru dir */
+        fpage = (int32) (dirbuf[i] & RMASK);            /* file page */
+        mpage = (int32) (dirbuf[i + 1] & RMASK);        /* memory page */
+        rpt = ((int32) ((dirbuf[i + 1] >> 27) + 1)) & 0777; /* repeat count */
+        for (j = 0; j < rpt; j++, mpage++) {            /* loop thru rpts */
+            if (fpage) {                                /* file pages? */
+                (void)sim_fseek (fileref, (fpage << PAG_V_PN) * 5, SEEK_SET);
+                for (k = 0; k < PAG_SIZE; k++) {
+                     if (get_word(fileref, &pagbuf[k], ftype))
+                         break;
+                }
+                fpage++;
             }
-            fpage++;
-            }
-        ma = mpage << PAG_V_PN;                         /* mem addr */
-        for (k = 0; k < PAG_SIZE; k++, ma++) {          /* copy buf to mem */
-            if (ma > MEMSIZE)
-                return SCPE_NXM;
-            M[ma] = fpage? (pagbuf[k] & FMASK): 0;
+            ma = mpage << PAG_V_PN;                     /* mem addr */
+            for (k = 0; k < PAG_SIZE; k++, ma++) {      /* copy buf to mem */
+                if (ma > MEMSIZE)
+                    return SCPE_NXM;
+                M[ma] = fpage? (pagbuf[k] & FMASK): 0;
             }                                           /* end copy */
         }                                               /* end rpt */
     }                                                   /* end directory */
-if (entvec && entbuf[1])
-    PC = (int32) (entbuf[1] & RMASK);               /* start addr */
-else if (entvec == 0)
-    PC = (int32) (M[0120] & RMASK);
-return SCPE_OK;
+    if (entvec && entbuf[1])
+        PC = (int32) (entbuf[1] & RMASK);               /* start addr */
+    else if (entvec == 0)
+        PC = (int32) (M[0120] & RMASK);
+    return SCPE_OK;
 }
 
 static int     exb_pos = -1;
@@ -764,16 +784,19 @@ t_stat load_exb (FILE *fileref, int ftype)
         addr |= byt << 8;
         if (get_exb_byte(fileref, &byt, ftype))
             return SCPE_FMT;
-        addr |= byt << 16; 
+        addr |= byt << 16;
         if (get_exb_byte(fileref, &byt, ftype))
             return SCPE_FMT;
-        addr |= byt << 24; 
+        addr |= byt << 24;
         /* Empty record gives start address */
+        if (addr > MEMSIZE)
+            return SCPE_FMT;
         if (wc == 0) {
             PC = addr;
             return SCPE_OK;
         }
         pos = 0;
+        word = 0;
         for (; wc > 0; wc--, pos++) {
             if (get_exb_byte(fileref, &byt, ftype))
                 return SCPE_FMT;
@@ -783,6 +806,8 @@ t_stat load_exb (FILE *fileref, int ftype)
             case 2: word |= ((uint64)byt) << 16; break;
             case 3: word |= ((uint64)byt) << 24; break;
             case 4: word |= ((uint64)(byt & 017)) << 32;
+                    if (addr > MEMSIZE)
+                        return SCPE_FMT;
                     M[addr++] = word;
                     pos = -1;
                     break;
@@ -796,73 +821,73 @@ t_stat load_exb (FILE *fileref, int ftype)
 
 t_stat sim_load (FILE *fileref, CONST char *cptr, CONST char *fnam, int flag)
 {
-uint64 data;
-int32 wc, fmt;
-int ftype;
-extern int32 sim_switches;
+    uint64 data;
+    int32 wc, fmt;
+    int ftype;
+    extern int32 sim_switches;
 
-fmt = 0;                                                /* no fmt */
-ftype = 0;
-if (sim_switches & SWMASK ('C'))                        /* -c? core dump */
-    ftype = 1;
-if (sim_switches & SWMASK ('R'))                        /* -r? */
-    fmt = FMT_R;
-else if (sim_switches & SWMASK ('S'))                   /* -s? */
-    fmt = FMT_S;
-else if (sim_switches & SWMASK ('E'))                   /* -e? */
-    fmt = FMT_E;
-else if (sim_switches & SWMASK ('D'))                   /* -d? */
-    fmt = FMT_D;
-else if (sim_switches & SWMASK ('I'))                   /* -i? */
-    fmt = FMT_I;
-else if (sim_switches & SWMASK ('B'))                   /* -b? */
-    fmt = FMT_B;
-else if (match_ext (fnam, "RIM"))                       /* .RIM? */
-    fmt = FMT_R;
-else if (match_ext (fnam, "SAV"))                       /* .SAV? */
-    fmt = FMT_S;
-else if (match_ext (fnam, "EXE"))                       /* .EXE? */
-    fmt = FMT_E;
-else if (match_ext (fnam, "EXB"))                       /* .EXB? */
-    fmt = FMT_B;
-else if (match_ext (fnam, "DMP"))                       /* .DMP? */
-    fmt = FMT_D;
-else if (match_ext (fnam, "BIN"))                       /* .BIN? */
-    fmt = FMT_I;
-else {
-    wc = sim_fread (&data, sizeof (uint64), 1, fileref);/* read hdr */
-    if (wc == 0)                                        /* error? */
-        return SCPE_FMT;
-    if (LRZ (data) == EXE_DIR)                          /* EXE magic? */
-        fmt = FMT_E;
-    else if (TSTS (data))                               /* SAV magic? */
+    fmt = 0;                                            /* no fmt */
+    ftype = 0;
+    if (sim_switches & SWMASK ('C'))                    /* -c? core dump */
+        ftype = 1;
+    if (sim_switches & SWMASK ('R'))                    /* -r? */
+        fmt = FMT_R;
+    else if (sim_switches & SWMASK ('S'))               /* -s? */
         fmt = FMT_S;
-    fseek (fileref, 0, SEEK_SET);                       /* rewind */
+    else if (sim_switches & SWMASK ('E'))               /* -e? */
+        fmt = FMT_E;
+    else if (sim_switches & SWMASK ('D'))               /* -d? */
+        fmt = FMT_D;
+    else if (sim_switches & SWMASK ('I'))               /* -i? */
+        fmt = FMT_I;
+    else if (sim_switches & SWMASK ('B'))               /* -b? */
+        fmt = FMT_B;
+    else if (match_ext (fnam, "RIM"))                   /* .RIM? */
+        fmt = FMT_R;
+    else if (match_ext (fnam, "SAV"))                   /* .SAV? */
+        fmt = FMT_S;
+    else if (match_ext (fnam, "EXE"))                   /* .EXE? */
+        fmt = FMT_E;
+    else if (match_ext (fnam, "EXB"))                   /* .EXB? */
+        fmt = FMT_B;
+    else if (match_ext (fnam, "DMP"))                   /* .DMP? */
+        fmt = FMT_D;
+    else if (match_ext (fnam, "BIN"))                   /* .BIN? */
+        fmt = FMT_I;
+    else {
+        wc = sim_fread (&data, sizeof (uint64), 1, fileref);/* read hdr */
+        if (wc == 0)                                    /* error? */
+            return SCPE_FMT;
+        if (LRZ (data) == EXE_DIR)                      /* EXE magic? */
+            fmt = FMT_E;
+        else if (TSTS (data))                           /* SAV magic? */
+            fmt = FMT_S;
+        fseek (fileref, 0, SEEK_SET);                   /* rewind */
     }
 
-switch (fmt) {                                          /* case fmt */
+    switch (fmt) {                                      /* case fmt */
 
-    case FMT_R:                                         /* RIM */
-        return load_rim (fileref);
+        case FMT_R:                                     /* RIM */
+            return load_rim (fileref);
 
-    case FMT_S:                                         /* SAV */
-        return load_sav (fileref, ftype);
+        case FMT_S:                                     /* SAV */
+            return load_sav (fileref, ftype);
 
-    case FMT_E:                                         /* EXE */
-        return load_exe (fileref, ftype);
+        case FMT_E:                                     /* EXE */
+            return load_exe (fileref, ftype);
 
-    case FMT_D:                                         /* DMP */
-        return load_dmp (fileref);
+        case FMT_D:                                     /* DMP */
+            return load_dmp (fileref);
 
-    case FMT_I:                                         /* SBLK */
-        return load_sblk (fileref);
+        case FMT_I:                                     /* SBLK */
+            return load_sblk (fileref);
 
-    case FMT_B:                                         /* EXB */
-        return load_exb  (fileref, ftype);
-        }
+        case FMT_B:                                     /* EXB */
+            return load_exb  (fileref, ftype);
+    }
 
-printf ("Can't determine load file format\n");
-return SCPE_FMT;
+    printf ("Can't determine load file format\n");
+    return SCPE_FMT;
 }
 
 /* Symbol tables */
@@ -901,7 +926,7 @@ static const char *opcode[] = {
 "SETSTS", "STATO",  "STATUS", "GETSTS", "INBUF",  "OUTBUF", "INPUT",  "OUTPUT",
 "CLOSE",  "RELEAS", "MTAPE",  "UGETF",  "USETI", "USETO",  "LOOKUP",  "ENTER",
 
-#if KL
+#if KL | KS
 "UJEN",         "GFAD", "GFSB", "JSYS", "ADJSP", "GFMP", "GFDV ",
 "DFAD", "DFSB", "DFMP", "DFDV", "DADD", "DSUB", "DMUL", "DDIV",
 #else
@@ -960,6 +985,19 @@ static const char *opcode[] = {
 "TRO", "TLO", "TROE", "TLOE", "TROA", "TLOA", "TRON", "TLON",
 "TDO", "TSO", "TDOE", "TSOE", "TDOA", "TSOA", "TDON", "TSON",
 
+#if KS
+ "APRID", "CLRSCH", "RDUBR", "CLRPT",
+ "WRUBR", "WREBR", "RDEBR",
+ "RDSPB", "RDCSB", "RDPUR", "RDCSTM",
+ "RDTIME", "RDINT", "RDHSB", "SPM",
+ "WRSPB", "WRCSB", "WRPUR", "WRCSTM",
+ "WRTIME", "WRINT", "WRHSB", "LPMR",
+ "UMOVE", "UMOVEM",
+ "TIOE", "TION", "RDIO", "WRIO",
+ "BSIO", "BCIO",
+ "TIOEB", "TIONB", "RDIOB", "WRIOB",
+ "BSIOB", "BCIOB",
+#endif
 
 "BLKI", "DATAI", "BLKO", "DATAO",                       /* classic I/O */
 "CONO",  "CONI", "CONSZ", "CONSO",
@@ -1094,9 +1132,21 @@ static const t_int64 opc_val[] = {
  0670000000000+I_AC, 0671000000000+I_AC, 0672000000000+I_AC, 0673000000000+I_AC,
  0674000000000+I_AC, 0675000000000+I_AC, 0676000000000+I_AC, 0677000000000+I_AC,
 
+#if KS
+ 0700000000000+I_OP, 0701000000000+I_OP, 0701040000000+I_OP, 0701100000000+I_OP,
+ 0701140000000+I_OP, 0701200000000+I_OP, 0701240000000+I_OP,
+ 0702000000000+I_OP, 0702040000000+I_OP, 0702100000000+I_OP, 0702140000000+I_OP,
+ 0702200000000+I_OP, 0702240000000+I_OP, 0702300000000+I_OP, 0702340000000+I_OP,
+ 0702400000000+I_OP, 0702440000000+I_OP, 0702500000000+I_OP, 0702540000000+I_OP,
+ 0702600000000+I_OP, 0702640000000+I_OP, 0702700000000+I_OP, 0702740000000+I_OP,
+ 0704000000000+I_AC, 0705000000000+I_AC,
+ 0710000000000+I_AC, 0711000000000+I_AC, 0712000000000+I_AC, 0713000000000+I_AC,
+ 0714000000000+I_AC, 0715000000000+I_AC,
+ 0720000000000+I_AC, 0721000000000+I_AC, 0722000000000+I_AC, 0723000000000+I_AC,
+ 0724000000000+I_AC, 0725000000000+I_AC,
+#endif
  0700000000000+I_IO, 0700040000000+I_IO, 0700100000000+I_IO, 0700140000000+I_IO,
  0700200000000+I_IO, 0700240000000+I_IO, 0700300000000+I_IO, 0700340000000+I_IO,
-
  -1
  };
 
@@ -1124,71 +1174,72 @@ static const char *devnam[NUMDEV] = {
 t_stat fprint_sym (FILE *of, t_addr addr, t_value *val,
     UNIT *uptr, int32 sw)
 {
-int32 i, j, c, cflag, ac, xr, y, dev;
-uint64 inst;
+    int32 i, j, c, ac, xr, y, dev;
+    uint64 inst;
 
-inst = val[0];
-cflag = (uptr == NULL) || (uptr == &cpu_unit[0]);
-if (sw & SWMASK ('A')) {                                /* ASCII? */
-    if (inst > 0377)
-        return SCPE_ARG;
-    fprintf (of, FMTASC ((int32) (inst & 0177)));
-    return SCPE_OK;
-    }
-if (sw & SWMASK ('C')) {                                /* character? */
-    for (i = 30; i >= 0; i = i - 6) {
-        c = (int32) ((inst >> i) & 077);
-        fprintf (of, "%c", SIXTOASC (c));
-                }
-    return SCPE_OK;
-    }
-if (sw & SWMASK ('P')) {                                /* packed? */
-    for (i = 29; i >= 0; i = i - 7) {
-        c = (int32) ((inst >> i) & 0177);
-        fprintf (of, FMTASC (c));
-                }
-    return SCPE_OK;
-    }
-if (!(sw & SWMASK ('M')))
-    return SCPE_ARG;
-
-/* Instruction decode */
-
-ac = GET_AC (inst);
-xr = GET_XR (inst);
-y = GET_ADDR (inst);
-dev = GET_DEV (inst);
-for (i = 0; opc_val[i] >= 0; i++) {                     /* loop thru ops */
-    j = (int32) ((opc_val[i] >> I_V_FL) & I_M_FL);      /* get class */
-    if (((opc_val[i] & FMASK) == (inst & masks[j]))) {  /* match? */
-        fprintf (of, "%s ", opcode[i]);                 /* opcode */
-        switch (j) {                                    /* case on class */
-
-        case I_V_AC:                                    /* AC + address */
-            fprintf (of, "%-o,", ac);                   /* print AC, fall thru */
-        case I_V_OP:                                    /* address only */
-            if (inst & INST_IND)
-                fprintf (of, "@");
-            if (xr)
-                fprintf (of, "%-o(%-o)", y, xr);
-            else fprintf (of, "%-o", y);
-            break;
-
-        case I_V_IO:                                    /* I/O */
-            if (dev < NUMDEV)
-                fprintf (of, "%s,", devnam[dev]);
-            else fprintf (of, "%-o,", dev<<2);
-            if (inst & INST_IND)
-                fprintf (of, "@");
-            if (xr)
-                fprintf (of, "%-o(%-o)", y, xr);
-            else fprintf (of, "%-o", y);
-            break;
-            }                                           /* end case */
+    inst = val[0];
+    if (sw & SWMASK ('A')) {                            /* ASCII? */
+        if (inst > 0377)
+            return SCPE_ARG;
+        fprintf (of, FMTASC ((int32) (inst & 0177)));
         return SCPE_OK;
+    }
+    if (sw & SWMASK ('C')) {                            /* character? */
+        for (i = 30; i >= 0; i = i - 6) {
+            c = (int32) ((inst >> i) & 077);
+            fprintf (of, "%c", SIXTOASC (c));
+        }
+        return SCPE_OK;
+    }
+    if (sw & SWMASK ('P')) {                            /* packed? */
+        for (i = 29; i >= 0; i = i - 7) {
+            c = (int32) ((inst >> i) & 0177);
+            fprintf (of, FMTASC (c));
+        }
+        return SCPE_OK;
+    }
+    if (!(sw & SWMASK ('M')))
+        return SCPE_ARG;
+
+    /* Instruction decode */
+
+    ac = GET_AC (inst);
+    xr = GET_XR (inst);
+    y = GET_ADDR (inst);
+    dev = GET_DEV (inst);
+    for (i = 0; opc_val[i] >= 0; i++) {                 /* loop thru ops */
+        j = (int32) ((opc_val[i] >> I_V_FL) & I_M_FL);  /* get class */
+        if (((opc_val[i] & FMASK) == (inst & masks[j]))) { /* match? */
+            fprintf (of, "%s ", opcode[i]);             /* opcode */
+            switch (j) {                                /* case on class */
+
+            case I_V_AC:                                /* AC + address */
+                fprintf (of, "%-o,", ac);               /* print AC, fall thru */
+            case I_V_OP:                                /* address only */
+                if (inst & INST_IND)
+                    fprintf (of, "@");
+                if (xr)
+                    fprintf (of, "%-o(%-o)", y, xr);
+                else fprintf (of, "%-o", y);
+                break;
+
+            case I_V_IO:                                /* I/O */
+                if (dev < NUMDEV)
+                    fprintf (of, "%s,", devnam[dev]);
+                else
+                    fprintf (of, "%-o,", dev << 2);
+                if (inst & INST_IND)
+                    fprintf (of, "@");
+                if (xr)
+                    fprintf (of, "%-o(%-o)", y, xr);
+                else
+                    fprintf (of, "%-o", y);
+                break;
+            }                                           /* end case */
+            return SCPE_OK;
         }                                               /* end if */
     }                                                   /* end for */
-return SCPE_ARG;
+    return SCPE_ARG;
 }
 
 /* Get operand, including indirect and index
@@ -1202,38 +1253,38 @@ return SCPE_ARG;
 
 t_value get_opnd (const char *cptr, t_stat *status)
 {
-int32 sign = 0;
-t_value val, xr = 0, ind = 0;
-const char *tptr;
+    int32 sign = 0;
+    t_value val, xr = 0, ind = 0;
+    const char *tptr;
 
-*status = SCPE_ARG;                                     /* assume fail */
-if (*cptr == '@') {
-    ind = INST_IND;
-    cptr++;
+    *status = SCPE_ARG;                                 /* assume fail */
+    if (*cptr == '@') {
+        ind = INST_IND;
+        cptr++;
     }
-if (*cptr == '+')
-    cptr++;
-else if (*cptr == '-') {
-    sign = 1;
-    cptr++;
+    if (*cptr == '+')
+        cptr++;
+    else if (*cptr == '-') {
+        sign = 1;
+        cptr++;
     }
-val = strtotv (cptr, &tptr, 8);
-if (val > 0777777)
-    return 0;
-if (sign)
-    val = (~val + 1) & 0777777;
-cptr = tptr;
-if (*cptr == '(') {
-    cptr++;
-    xr = strtotv (cptr, &tptr, 8);
-    if ((cptr == tptr) || (*tptr != ')') ||
-        (xr > 017) || (xr == 0))
+    val = strtotv (cptr, &tptr, 8);
+    if (val > 0777777)
         return 0;
-    cptr = ++tptr;
+    if (sign)
+        val = (~val + 1) & 0777777;
+    cptr = tptr;
+    if (*cptr == '(') {
+        cptr++;
+        xr = strtotv (cptr, &tptr, 8);
+        if ((cptr == tptr) || (*tptr != ')') ||
+            (xr > 017) || (xr == 0))
+            return 0;
+        cptr = ++tptr;
     }
-if (*cptr == 0)
-    *status = SCPE_OK;
-return (ind | (xr << 18) | val);
+    if (*cptr == 0)
+        *status = SCPE_OK;
+    return (ind | (xr << 18) | val);
 }
 
 /* Symbolic input
@@ -1250,85 +1301,88 @@ return (ind | (xr << 18) | val);
 
 t_stat parse_sym (CONST char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
 {
-int32 cflag, i, j;
-t_value ac, dev;
-t_stat r;
-char gbuf[CBUFSIZE], cbuf[2*CBUFSIZE];
+    int32 i, j;
+    t_value ac, dev;
+    t_stat r;
+    char gbuf[CBUFSIZE], cbuf[2*CBUFSIZE];
 
-cflag = (uptr == NULL) || (uptr == &cpu_unit[0]);
-while (isspace (*cptr)) cptr++;
-memset (cbuf, '\0', sizeof(cbuf));
-strncpy (cbuf, cptr, sizeof(cbuf)-7);
-cptr = cbuf;
-if ((sw & SWMASK ('A')) || ((*cptr == '\'') && cptr++)) { /* ASCII char? */
-    if (cptr[0] == 0)                                   /* must have 1 char */
-        return SCPE_ARG;
-    val[0] = (t_value) cptr[0];
-    return SCPE_OK;
+    while (isspace (*cptr)) cptr++;
+    memset (cbuf, '\0', sizeof(cbuf));
+    strncpy (cbuf, cptr, sizeof(cbuf)-7);
+    cptr = cbuf;
+    if ((sw & SWMASK ('A')) || ((*cptr == '\'') && cptr++)) { /* ASCII char? */
+        if (cptr[0] == 0)                               /* must have 1 char */
+            return SCPE_ARG;
+        val[0] = (t_value) cptr[0];
+        return SCPE_OK;
     }
-if ((sw & SWMASK ('C')) || ((*cptr == '"') && cptr++)) { /* sixbit string? */
-    if (cptr[0] == 0)                                   /* must have 1 char */
-        return SCPE_ARG;
-    for (i = 0; i < 6; i++) {
-        val[0] = (val[0] << 6);
-        if (cptr[i]) val[0] = val[0] |
-            ((t_value) ((cptr[i] + 040) & 077));
+    if ((sw & SWMASK ('C')) || ((*cptr == '"') && cptr++)) { /* sixbit string? */
+        if (cptr[0] == 0)                               /* must have 1 char */
+            return SCPE_ARG;
+        for (i = 0; i < 6; i++) {
+            val[0] = (val[0] << 6);
+            if (cptr[i]) val[0] = val[0] |
+                ((t_value) ((cptr[i] + 040) & 077));
         }
-    return SCPE_OK;
+        return SCPE_OK;
     }
-if ((sw & SWMASK ('P')) || ((*cptr == '#') && cptr++)) { /* packed string? */
-    if (cptr[0] == 0)                                   /* must have 1 char */
+    if ((sw & SWMASK ('P')) || ((*cptr == '#') && cptr++)) { /* packed string? */
+        if (cptr[0] == 0)                               /* must have 1 char */
+            return SCPE_ARG;
+        for (i = 0; i < 5; i++)
+            val[0] = (val[0] << 7) | ((t_value) cptr[i]);
+        val[0] = val[0] << 1;
+        return SCPE_OK;
+    }
+
+    /* Instruction parse */
+
+    cptr = get_glyph (cptr, gbuf, 0);                   /* get opcode */
+    for (i = 0; (opcode[i] != NULL) && (strcmp (opcode[i], gbuf) != 0) ; i++) ;
+    if (opcode[i] == NULL)
         return SCPE_ARG;
-    for (i = 0; i < 5; i++)
-        val[0] = (val[0] << 7) | ((t_value) cptr[i]);
-    val[0] = val[0] << 1;
-    return SCPE_OK;
-    }
+    val[0] = opc_val[i] & FMASK;                        /* get value */
+    j = (int32) ((opc_val[i] >> I_V_FL) & I_M_FL);      /* get class */
+    switch (j) {                                        /* case on class */
 
-/* Instruction parse */
-
-cptr = get_glyph (cptr, gbuf, 0);                       /* get opcode */
-for (i = 0; (opcode[i] != NULL) && (strcmp (opcode[i], gbuf) != 0) ; i++) ;
-if (opcode[i] == NULL)
-    return SCPE_ARG;
-val[0] = opc_val[i] & FMASK;                            /* get value */
-j = (int32) ((opc_val[i] >> I_V_FL) & I_M_FL);          /* get class */
-switch (j) {                                            /* case on class */
-
-    case I_V_AC:                                        /* AC + operand */
-        if (strchr (cptr, ',')) {                       /* AC specified? */
-            cptr = get_glyph (cptr, gbuf, ',');         /* get glyph */
-            if (gbuf[0]) {                              /* can be omitted */
-                ac = get_uint (gbuf, 8, 017 - 1, &r);
-                if (r != SCPE_OK)
-                    return SCPE_ARG;
-                val[0] = val[0] | (ac << INST_V_AC);
+        case I_V_AC:                                    /* AC + operand */
+            if (strchr (cptr, ',')) {                   /* AC specified? */
+                cptr = get_glyph (cptr, gbuf, ',');     /* get glyph */
+                if (gbuf[0]) {                          /* can be omitted */
+                    ac = get_uint (gbuf, 8, 017 - 1, &r);
+                    if (r != SCPE_OK)
+                        return SCPE_ARG;
+                    val[0] = val[0] | (ac << INST_V_AC);
                 }
             }                                           /* fall through */
-    case I_V_OP:                                        /* operand */
-        cptr = get_glyph (cptr, gbuf, 0);
-        val[0] = val[0] | get_opnd (gbuf, &r);
-        if (r != SCPE_OK)
-            return SCPE_ARG;
-        break;
 
-    case I_V_IO:                                        /* I/O */
-        cptr = get_glyph (cptr, gbuf, ',');             /* get glyph */
-        for (dev = 0; (dev < NUMDEV) && (strcmp (devnam[dev], gbuf) != 0); dev++);
-        if (dev >= NUMDEV) {
-            dev = get_uint (gbuf, 8, INST_M_DEV, &r);
+        case I_V_OP:                                    /* operand */
+            cptr = get_glyph (cptr, gbuf, 0);
+            val[0] = val[0] | get_opnd (gbuf, &r);
             if (r != SCPE_OK)
                 return SCPE_ARG;
-            }
-        val[0] = val[0] | (dev << INST_V_DEV);
-        cptr = get_glyph (cptr, gbuf, 0);
-        val[0] = val[0] | get_opnd (gbuf, &r);
-        if (r != SCPE_OK)
-            return SCPE_ARG;
-        break;
-        }                                               /* end case */
+            break;
 
-if (*cptr != 0)                                         /* junk at end? */
-    return SCPE_ARG;
-return SCPE_OK;
+        case I_V_IO:                                    /* I/O */
+            cptr = get_glyph (cptr, gbuf, ',');         /* get glyph */
+            for (dev = 0;
+                 (dev < NUMDEV) && (strcmp (devnam[dev], gbuf) != 0);
+                  dev++);
+            if (dev >= NUMDEV) {
+                dev = get_uint (gbuf, 8, INST_M_DEV << 2, &r);
+                if (r != SCPE_OK)
+                    return SCPE_ARG;
+                dev >>= 2;
+            }
+            val[0] = val[0] | (dev << INST_V_DEV);
+            cptr = get_glyph (cptr, gbuf, 0);
+            val[0] = val[0] | get_opnd (gbuf, &r);
+            if (r != SCPE_OK)
+                return SCPE_ARG;
+            break;
+    }                                                   /* end case */
+
+    if (*cptr != 0)                                     /* junk at end? */
+        return SCPE_ARG;
+    return SCPE_OK;
 }

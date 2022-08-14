@@ -168,6 +168,7 @@ static uint16 mtbootstrap9[] = {
 };
 #define MTBOOTLEN9      (sizeof(mtbootstrap9) / sizeof(uint16))
 
+#if 0
 /*
  * Seven-track magnetic tape bootstrap
  */
@@ -213,6 +214,7 @@ static uint16 mtbootstrap7[] = {
   0x0000                        /* 26:              */
 };
 #define MTBOOTLEN7      (sizeof(mtbootstrap7) / sizeof(uint16))
+#endif
 
 /*
  * SMM17 bootstraps
@@ -239,6 +241,7 @@ static uint16 smm17boot9[] = {
 };
 #define SMM17BOOTLEN9   (sizeof(smm17boot9) / sizeof(uint16))
 
+#if 0
 static uint16 smm17boot7[] = {
   0x68FE,                       /* xFE0: MTBOOT STA*    *-1             */
   0xE000,                       /* xFE1:        LDQ     =N$WESD         */
@@ -271,6 +274,7 @@ static uint16 smm17boot7[] = {
   0x1007                        /* xFFC:        JMP-    QL ENTRY        */
 };
 #define SMM17BOOTLEN7   (sizeof(smm17boot7) / sizeof(uint16))
+#endif
 
 /*
  * Shared I/O buffer. Note that this is larger than the max possible memory
@@ -287,7 +291,6 @@ t_stat mt_reset(DEVICE *);
 t_stat mt_boot(int32, DEVICE *);
 t_stat mt_attach(UNIT *, CONST char *);
 t_stat mt_detach(UNIT *);
-t_stat mt_vlock(UNIT *, int32 val, CONST char *cptr, void *desc);
 
 void MTstate(const char *, DEVICE *, IO_DEVICE *);
 void MTclear(DEVICE *);
@@ -479,10 +482,10 @@ MTAB mt_mod[] = {
     &mt_set_type, &mt_show_type, NULL, "Set/Display magtape controller type" },
   { MTAB_XTD|MTAB_VDV, 0, "EQUIPMENT", "EQUIPMENT=hexAddress",
     &set_equipment, &show_addr, NULL, "Set/Display equipment address" },
-  { MTUF_WLK, 0, "write enabled", "WRITEENABLED",
-    &mt_vlock, NULL, NULL, "Mark transport as write enabled" },
-  { MTUF_WLK, MTUF_WLK, "write locked", "LOCKED",
-    &mt_vlock, NULL, NULL, "Mark transport as writed locked" },
+  { MTAB_XTD|MTAB_VUN, 0, "write enabled", "WRITEENABLED", 
+        &set_writelock, &show_writelock,   NULL, "Write enable tape drive" },
+  { MTAB_XTD|MTAB_VUN, 1, NULL, "LOCKED", 
+        &set_writelock, NULL,   NULL, "Write lock tape drive" },
   { MTAB_XTD|MTAB_VUN, 0, "FORMAT", "FORMAT",
     &sim_tape_set_fmt, &sim_tape_show_fmt, NULL, "Define tape format" },
   { MTAB_XTD|MTAB_VUN, 0, "CAPACITY", "CAPACITY",
@@ -1321,6 +1324,7 @@ t_stat mt_svc(UNIT *uptr)
       break;
 
     case IO_1732_SFWD:
+      status = MTSE_OK;
       while (!sim_tape_eot(uptr)) {
         status = sim_tape_sprecf(uptr, &temp);
         
@@ -1342,6 +1346,7 @@ t_stat mt_svc(UNIT *uptr)
       break;
 
      case IO_1732_SBACK:
+       status = MTSE_OK;
        while (!sim_tape_bot(uptr)) {
          status = sim_tape_sprecr(uptr, &temp);
 
@@ -1484,9 +1489,9 @@ t_stat mt_attach(UNIT *uptr, CONST char *cptr)
   if (r != SCPE_OK)
     return r;
 
-  uptr->flags &= ~UNIT_WPROT;
+  uptr->flags &= ~UNIT_WPRT;
   if (sim_switches & SWMASK('R'))
-    uptr->flags |= UNIT_WPROT;
+    uptr->flags |= UNIT_WPRT;
 
   uptr->DENS = IO_ST2_800;
 
@@ -1495,7 +1500,7 @@ t_stat mt_attach(UNIT *uptr, CONST char *cptr)
    */
   if (MTdev.iod_unit == uptr) {
     MTdev.STATUS2 = uptr->DENS & (IO_ST2_556 | IO_ST2_800);
-    if ((uptr->flags & UNIT_WPROT) != 0)
+    if ((uptr->flags & UNIT_WPRT) != 0)
       MTdev.STATUS2 &= ~IO_ST2_WENABLE;
     else MTdev.STATUS2 |= IO_ST2_WENABLE;
     if ((uptr->flags & UNIT_7TRACK) != 0)
@@ -1525,17 +1530,6 @@ t_stat mt_detach(UNIT *uptr)
   return st;
 }
 
-/* Write lock/enable routine */
-
-t_stat mt_vlock(UNIT *uptr, int32 val, CONST char *cptr, void *desc)
-{
-  if (((uptr->flags & UNIT_ATT) != 0) && (val || sim_tape_wrp(uptr)))
-    uptr->flags |= UNIT_WPROT;
-  else uptr->flags &= ~UNIT_WPROT;
-
-  return SCPE_OK;
-}
-
 /*
  * Perform a "Clear Controller" operation. Basically this is similar to a
  * device reset except it does not forget the currently selected transport.
@@ -1558,7 +1552,7 @@ void MTclear(DEVICE *dptr)
     fw_setForced(&MTdev, IO_ST_READY);
 
     MTdev.STATUS2 = uptr->DENS & (IO_ST2_556 | IO_ST2_800);
-    if ((uptr->flags & UNIT_WPROT) != 0)
+    if ((uptr->flags & UNIT_WPRT) != 0)
       MTdev.STATUS2 &= ~IO_ST2_WENABLE;
     else MTdev.STATUS2 |= IO_ST2_WENABLE;
     if ((uptr->flags & UNIT_7TRACK) != 0)
@@ -1720,7 +1714,6 @@ enum IOstatus doMTFunction(DEVICE *dev)
 {
   UNIT *uptr;
   t_stat st;
-  t_mtrlnt count = 1;
 
   /*
    * Handle commands in the following order:
@@ -1883,6 +1876,12 @@ enum IOstatus MTout(IO_DEVICE *iod, uint8 reg)
 
     case 0x02:
       /*
+       * Get the unit number for select
+       */
+      unit = MTdev.iod_type == DEVTYPE_1732_3 ? IO_1732_UNIT : IO_1732A_UNIT;
+      unit = (unit & Areg) >> 7;
+
+      /*
        * Check for invalid bit combinations.
        */
       if ((Areg & IO_1732_PARITY) == IO_1732_PARITY)
@@ -1896,9 +1895,6 @@ enum IOstatus MTout(IO_DEVICE *iod, uint8 reg)
         /*
          * Check for illegal unit select.
          */
-        unit = MTdev.iod_type == DEVTYPE_1732_3 ? IO_1732_UNIT : IO_1732A_UNIT;
-        unit = (unit & Areg) >> 7;
-
         if (unit >= mt_dev.numunits)
           return IO_REJECT;
       }
@@ -1991,7 +1987,7 @@ enum IOstatus MTout(IO_DEVICE *iod, uint8 reg)
          * Make sure STATUS2 values are consistent with actual drive status.
          */
         MTdev.STATUS2 = uptr->DENS & (IO_ST2_556 | IO_ST2_800);
-        if ((uptr->flags & UNIT_WPROT) != 0)
+        if ((uptr->flags & UNIT_WPRT) != 0)
           MTdev.STATUS2 &= ~IO_ST2_WENABLE;
         else MTdev.STATUS2 |= IO_ST2_WENABLE;
         if ((uptr->flags & UNIT_7TRACK) != 0)

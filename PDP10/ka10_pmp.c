@@ -311,7 +311,7 @@ struct disk_t
 {
     const char         *name;         /* Type Name */
     int                 cyl;          /* Number of cylinders */
-    int                 heads;        /* Number of heads/cylinder */
+    uint32              heads;        /* Number of heads/cylinder */
     int                 bpt;          /* Max bytes per track */
     uint8               sen_cnt;      /* Number of sense bytes */
     uint8               dev_type;     /* Device type code */
@@ -335,7 +335,7 @@ disk_type[] =
 struct pmp_header
 {
        uint8    devid[8];      /* device header. */
-       int      heads;         /* number of heads per cylinder */
+       uint32   heads;         /* number of heads per cylinder */
        uint32   tracksize;     /* size of track */
        uint8    devtype;       /* Hex code of last two digits of device type. */
        uint8    fileseq;       /* always 0. */
@@ -409,7 +409,7 @@ DEVICE              pmp_dev = {
     "PMP", pmp_unit, NULL, pmp_mod,
     NUM_UNITS_PMP, 8, 15, 1, 8, 8,
     NULL, NULL, &pmp_reset, NULL, &pmp_attach, &pmp_detach,
-    &pmp_dib, DEV_DISABLE | DEV_DIS | DEV_DEBUG | DEV_DISK, 0, dev_debug,
+    &pmp_dib, DEV_DISABLE | DEV_DIS | DEV_DEBUG, 0, dev_debug,
     NULL, NULL, &pmp_help, NULL, NULL, &pmp_description
 };
 
@@ -968,7 +968,6 @@ pmp_startcmd() {
 void
 pmp_adjpos(UNIT * uptr)
 {
-    uint16              addr = GET_UADDR(uptr->flags);
     struct pmp_t      *data = (struct pmp_t *)(uptr->DATAPTR);
     uint8               *rec;
     int                 pos;
@@ -1097,7 +1096,7 @@ t_stat pmp_srv(UNIT * uptr)
                  goto index;
              }
              uptr->POS ++;
-             if ((uptr->POS & 0xff) >= disk_type[type].heads) {
+             if ((uint32)(uptr->POS & 0xff) >= disk_type[type].heads) {
                  sim_debug(DEBUG_DETAIL, dptr, "end cyl unit=%d %02x %d\n",
                            unit, state, data->tpos);
                  uptr->SENSE = (SNS_ENDCYL << 8);
@@ -1408,7 +1407,7 @@ sense_end:
          sim_debug(DEBUG_DETAIL, dptr, "seek unit=%d %d %d\n", unit, trk, buf[5]);
 
          /* Check if seek valid */
-         if ((buf[0] | buf[1] | buf[4]) != 0 || trk > disk_type[type].cyl
+         if ((buf[0] | buf[1] | buf[4]) != 0 || trk >= disk_type[type].cyl
                   || buf[5] >= disk_type[type].heads)  {
              uptr->LASTCMD = cmd;
              uptr->CMD &= ~(0xff);
@@ -2138,13 +2137,12 @@ int
 pmp_format(UNIT * uptr, int flag) {
     struct pmp_header  hdr;
     struct pmp_t       *data;
-    uint16              addr = GET_UADDR(uptr->flags);
     int                 type = GET_TYPE(uptr->flags);
     int                 tsize;
     int                 cyl;
     int                 sector;
     int                 rec;
-    int                 hd;
+    uint32              hd;
     uint32              pos;
 
     if (flag || get_yn("Initialize dasd? [Y] ", TRUE)) {
@@ -2163,7 +2161,7 @@ pmp_format(UNIT * uptr, int flag) {
         data->tsize = hdr.tracksize;
         if ((data->cbuf = (uint8 *)calloc(tsize, sizeof(uint8))) == 0)
             return 1;
-        for (cyl = 0; cyl <= disk_type[type].cyl; cyl++) {
+        for (cyl = 0; cyl < disk_type[type].cyl; cyl++) {
             pos = 0;
             for (hd = 0; hd < disk_type[type].heads; hd++) {
                 uint32 cpos = pos;
@@ -2214,8 +2212,8 @@ pmp_format(UNIT * uptr, int flag) {
         uptr->CMD |= DK_ATTN;
         pmp_statusb |= REQ_CH;
         sim_activate(uptr, 100);
-        fputc('\n', stderr);
         fputc('\r', stderr);
+        fputc('\n', stderr);
         return 0;
     } else
         return 1;
@@ -2227,10 +2225,10 @@ pmp_attach(UNIT * uptr, CONST char *file)
     uint16              addr = GET_UADDR(uptr->flags);
     int                 flag = (sim_switches & SWMASK ('I')) != 0;
     t_stat              r;
-    int                 i;
-    struct pmp_header  hdr;
+    unsigned int        i;
+    struct pmp_header   hdr;
     struct pmp_t       *data;
-    int                 tsize;
+    uint32              tsize;
 
     if ((r = attach_unit(uptr, file)) != SCPE_OK)
        return r;
@@ -2245,15 +2243,15 @@ pmp_attach(UNIT * uptr, CONST char *file)
         return SCPE_OK;
     }
 
-    sim_messagef(SCPE_OK, "Drive %03x=%d %d %02x %d\n\r",  addr,
+    sim_messagef(SCPE_OK, "Drive %03x=%d %d %02x %d\r\n",  addr,
              hdr.heads, hdr.tracksize, hdr.devtype, hdr.highcyl);
     for (i = 0; disk_type[i].name != 0; i++) {
-         tsize = (disk_type[i].bpt | 0x1ff) + 1;
+         tsize = (uint32)((disk_type[i].bpt | 0x1ff) + 1);
          if (hdr.devtype == disk_type[i].dev_type && hdr.tracksize == tsize &&
              hdr.heads == disk_type[i].heads && hdr.highcyl == disk_type[i].cyl) {
              if (GET_TYPE(uptr->flags) != i) {
                   /* Ask if we should change */
-                  fprintf(stderr, "Wrong type %s\n\r", disk_type[i].name);
+                  fprintf(stderr, "Wrong type %s\r\n", disk_type[i].name);
                   if (!get_yn("Update dasd type? [N] ", FALSE)) {
                       detach_unit(uptr);
                       return SCPE_FMT;
@@ -2295,7 +2293,6 @@ pmp_detach(UNIT * uptr)
 {
     struct pmp_t       *data = (struct pmp_t *)uptr->DATAPTR;
     int                 type = GET_TYPE(uptr->flags);
-    uint16              addr = GET_UADDR(uptr->flags);
     int                 cmd = uptr->CMD & 0x7f;
 
     if (uptr->CMD & DK_CYL_DIRTY) {
@@ -2370,7 +2367,7 @@ pmp_set_dev_addr(UNIT * uptr, int32 val, CONST char *cptr, void *desc)
     /* Update device entry */
     uptr->flags &= ~UNIT_ADDR(0xff);
     uptr->flags |= UNIT_ADDR(newdev);
-    fprintf(stderr, "Set dev %x\n\r", GET_UADDR(uptr->flags));
+    fprintf(stderr, "Set dev %x\r\n", GET_UADDR(uptr->flags));
     return r;
 }
 
@@ -2403,7 +2400,6 @@ pmp_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag,
     fprintf (st, ".\nEach drive has the following storage capacity:\n\n");
     for (i = 0; disk_type[i].name != 0; i++) {
         int32 size = disk_type[i].bpt * disk_type[i].heads * disk_type[i].cyl;
-        char  sm = 'K';
         size /= 1024;
         size = (10 * size) / 1024;
         fprintf(st, "      %-8s %4d.%1dMB\n", disk_type[i].name, size/10, size%10);

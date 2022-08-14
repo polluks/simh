@@ -1,6 +1,6 @@
 /* nova_mta.c: NOVA magnetic tape simulator
 
-   Copyright (c) 1993-2017, Robert M. Supnik
+   Copyright (c) 1993-2022, Robert M. Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -25,6 +25,7 @@
 
    mta          magnetic tape
 
+   26-Mar-22    RMS     Added extra case points for new MTSE definitions
    13-Mar-17    RMS     Annotated fall through in switch
    04-Jul-07    BKR     fixed boot code to properly boot self-boot tapes;
                         boot routine now uses standard DG APL boot code;
@@ -224,8 +225,10 @@ REG mta_reg[] = {
     };
 
 MTAB mta_mod[] = {
-    { MTUF_WLK, 0, "write enabled", "WRITEENABLED", &mta_vlock },
-    { MTUF_WLK, MTUF_WLK, "write locked", "LOCKED", &mta_vlock },
+    { MTAB_XTD|MTAB_VUN, 0, "write enabled", "WRITEENABLED", 
+        &set_writelock, &show_writelock,   NULL, "Write ring in place" },
+    { MTAB_XTD|MTAB_VUN, 1, NULL, "LOCKED", 
+        &set_writelock, NULL,   NULL, "no Write ring in place" },
     { MTAB_XTD|MTAB_VUN, 0, "FORMAT", "FORMAT",
       &sim_tape_set_fmt, &sim_tape_show_fmt, NULL },
     { 0 }
@@ -512,6 +515,7 @@ switch (st) {
     case MTSE_FMT:                                      /* illegal fmt */
         mta_upddsta (uptr, uptr->USTAT | STA_WLK | STA_RDY);
         /* fall through */
+    default:
     case MTSE_UNATT:                                    /* unattached */
         mta_sta = mta_sta | STA_ILL;
         /* fall through */

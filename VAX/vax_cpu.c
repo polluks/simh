@@ -267,8 +267,14 @@ int32 cpu_astop = 0;
 int32 mchk_va, mchk_ref;                                /* mem ref param */
 int32 ibufl, ibufh;                                     /* prefetch buf */
 int32 ibcnt, ppc;                                       /* prefetch ctl */
-uint32 cpu_idle_mask = VAX_IDLE_VMS;                    /* idle mask */
+uint32 cpu_idle_mask =                                  /* idle mask */
+#if defined (VAX_411) || defined (VAX_412)
+                       VAX_IDLE_INFOSERVER;
+uint32 cpu_idle_type = 2;                               /* default INFOSERVER */
+#else
+                       VAX_IDLE_VMS;
 uint32 cpu_idle_type = 1;                               /* default VMS */
+#endif
 int32 extra_bytes;                                      /* bytes referenced by current string instruction */
 jmp_buf save_env;
 REG *pcq_r = NULL;                                      /* PC queue reg ptr */
@@ -424,11 +430,11 @@ REG cpu_reg[] = {
 MTAB cpu_mod[] = {
     { UNIT_CONH, 0, "HALT to SIMH", "SIMHALT", NULL, NULL, NULL, "Set HALT to trap to simulator" },
     { UNIT_CONH, UNIT_CONH, "HALT to console", "CONHALT", NULL, NULL, NULL, "Set HALT to trap to console ROM" },
-    { MTAB_XTD|MTAB_VDV, 0, "IDLE", "IDLE={VMS|ULTRIX|ULTRIX-1.X|ULTRIXOLD|NETBSD|NETBSDOLD|OPENBSD|OPENBSDOLD|QUASIJARUS|32V|ELN|MDM}{:n}", &cpu_set_idle, &cpu_show_idle, NULL, "Display idle detection mode" },
+    { MTAB_XTD|MTAB_VDV, 0, "IDLE", "IDLE{=VMS|ULTRIX|ULTRIX-1.X|ULTRIXOLD|NETBSD|NETBSDOLD|OPENBSD|OPENBSDOLD|QUASIJARUS|32V|ELN|MDM|INFOSERVER}{:n}", &cpu_set_idle, &cpu_show_idle, NULL, "Display idle detection mode" },
     { MTAB_XTD|MTAB_VDV, 0, NULL, "NOIDLE", &sim_clr_idle, NULL, NULL,  "Disables idle detection" },
     MEM_MODIFIERS,   /* Model specific memory modifiers from vaxXXX_defs.h */
-    { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_SHP|MTAB_NC, 0, "HISTORY", "HISTORY",
-      &cpu_set_hist, &cpu_show_hist, NULL, "Displays instruction history" },
+    { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_SHP|MTAB_NC, 0, "HISTORY", "HISTORY=n",
+      &cpu_set_hist, &cpu_show_hist, NULL, "Enable/Display instruction history" },
     { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_SHP, 0, "VIRTUAL", NULL,
       NULL, &cpu_show_virt, NULL, "show translation for address arg in KESU mode" },
     CPU_MODEL_MODIFIERS  /* Model specific cpu modifiers from vaxXXX_defs.h */
@@ -2239,7 +2245,8 @@ for ( ;; ) {
             if ((((PSL & PSL_IS) != 0) &&               /* on IS? */
                  (PSL_GETIPL (PSL) == 0x1F) &&          /* at IPL 31 */
                  (mapen == 0) &&                        /* Running from ROM */
-                 (fault_PC == 0x2004361B)) ||           /* Boot ROM Character Prompt */
+                 ((fault_PC == 0x2004361B) ||           /* at a */
+                  (fault_PC == 0x20046A36))) ||         /* Boot ROM Character Prompt */
                 ((cpu_idle_mask & VAX_IDLE_ELN) &&      /* VAXELN Idle? */
                  (PSL & PSL_IS) &&                      /* on IS? */
                  (brdisp == 0xFA) &&                    /* Branch to prior TSTL */
@@ -2254,8 +2261,14 @@ for ( ;; ) {
         break;
 
     case BVS:
-        if (cc & CC_V)                                  /* br if V = 1 */
+        if (cc & CC_V) {                                /* br if V = 1 */
             BRANCHB (brdisp);
+            if ((cpu_idle_mask & VAX_IDLE_INFOSERVER) &&/* INFOSERVER Idle? */
+                 (PSL & PSL_IS) &&                      /* on IS? */
+                 (brdisp == 0xF1) &&                    /* Branch to prior INCL */
+                 (PSL_GETIPL (PSL) == 0x3))             /* at IPL 3 */
+                cpu_idle();
+            }
         break;
 
     case BGEQU:
@@ -3719,6 +3732,7 @@ struct os_idle {
 
 static struct os_idle os_tab[] = {
     { "VMS",            VAX_IDLE_VMS },
+    { "INFOSERVER",     VAX_IDLE_INFOSERVER },
     { "ULTRIX",         VAX_IDLE_ULT },
     { "ULTRIXOLD",      VAX_IDLE_ULTOLD },
     { "ULTRIX-1.X",     VAX_IDLE_ULT1X },
@@ -3927,6 +3941,8 @@ return r;
 
 t_stat cpu_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr)
 {
+DEVICE *bus = (find_dev ("QBA") != NULL) ? find_dev ("QBA") : find_dev ("UBA");
+
 fprintf (st, "The ");cpu_print_model (st);fprintf (st, " CPU help\n\n");
 fprintf (st, "CPU options include the size of main memory.\n\n");
 if (dptr->modifiers) {
@@ -3946,10 +3962,13 @@ fprintf (st, "translation:\n\n");
 fprintf (st, "   sim> SHOW {-kesu} CPU VIRTUAL=n      show translation for address n\n");
 fprintf (st, "                                        in kernel/exec/supervisor/user mode\n\n");
 fprintf (st, "Memory can be loaded with a binary byte stream using the LOAD command.  The\n");
-fprintf (st, "LOAD command recognizes three switches:\n\n");
+fprintf (st, "LOAD command recognizes these switches:\n\n");
 fprintf (st, "      -o      origin argument follows file name\n");
-fprintf (st, "      -r      load the boot ROM\n");
-fprintf (st, "      -n      load the non-volatile RAM\n\n");
+if (find_dev ("ROM") != NULL)
+    fprintf (st, "      -r      load the boot ROM\n");
+if (find_dev ("NVR") != NULL)
+    fprintf (st, "      -n      load the non-volatile RAM\n");
+fprintf (st, "\n");
 fprintf (st, "These switches are recognized when examining or depositing in CPU memory:\n\n");
 fprintf (st, "      -b      examine/deposit bytes\n");
 fprintf (st, "      -w      examine/deposit words\n");
@@ -3970,7 +3989,8 @@ fprintf (st, "simulator does not use any resources on the host system.  Idle det
 fprintf (st, "controlled by the SET IDLE and SET NOIDLE commands:\n\n");
 fprintf (st, "   sim> SET CPU IDLE{=VMS|ULTRIX|ULTRIXOLD|ULTRIX-1.X|\n");
 fprintf (st, "                      3BSD|4.0BSD|4.1BSD|4.2BSD|QUASIJARUS|\n");
-fprintf (st, "                      NETBSD|NETBSDOLD|OPENBSD|OPENBSDOLD|32V|ELN}{:n}\n");
+fprintf (st, "                      NETBSD|NETBSDOLD|OPENBSD|OPENBSDOLD|\n");
+fprintf (st, "                      32V|ELN|INFOSERVER}{:n}\n");
 fprintf (st, "                                        enable idle detection\n");
 fprintf (st, "   sim> SET CPU NOIDLE                  disable idle detection\n\n");
 fprintf (st, "Idle detection is disabled by default.  If idle detection is enabled with\n");
@@ -3999,5 +4019,49 @@ fprintf (st, "   sim> SHOW CPU INSTRUCTIONS     display the instructoin groups t
 fprintf (st, "                                  implemented and emulated\n");
 fprintf (st, "   sim> SHOW CPU -V INSTRUCTIONS  disable the list of instructions implemented\n");
 fprintf (st, "                                  and emulated\n\n");
+if (bus) {
+    fprintf (st, "I/O Device Addressing\n\n");
+    fprintf (st, "%s I/O space and vector space are not large enough to allow all\n", (strcmp (bus->name, "QBA") == 0) ? "Qbus" : "Unibus");
+    fprintf (st, "theoretically possible devices to be configured simultaneously at\n");
+    fprintf (st, "fixed addresses.  Instead, many devices have floating addresses and\n");
+    fprintf (st, "vectors; that is, the assigned device address and vector depend on the\n");
+    fprintf (st, "presence of other devices in the configuration:\n\n");
+    fprintf (st, "       DZ11/DZV11     all instances have floating addresses\n");
+    fprintf (st, "       DHU11/DHQ11    all instances have floating addresses\n");
+    fprintf (st, "       RL11           first instance has fixed address, rest floating\n");
+    fprintf (st, "       RX11/RX211     first instance has fixed address, rest floating\n");
+    fprintf (st, "       DEUNA/DELUA    first instance has fixed address, rest floating\n");
+    fprintf (st, "       MSCP disk      first instance has fixed address, rest floating\n");
+    fprintf (st, "       TMSCP tape     first instance has fixed address, rest floating\n\n");
+    fprintf (st, "In addition, some devices with fixed I/O space addresses have floating\n");
+    fprintf (st, "vector addresses.  DCI/DCO and DLI/DLO have floating vector addresses.\n\n");
+    fprintf (st, "To maintain addressing consistency as the configuration changes, the\n");
+    fprintf (st, "simulator implements DEC's standard I/O address and vector autoconfiguration.\n");
+    fprintf (st, "This allows the user to enable or disable devices without needing to\n");
+    fprintf (st, "manage I/O addresses and vectors.  For example, if RY is enabled while\n");
+    fprintf (st, "RX is present, RY is assigned an I/O address in the floating I/O space\n");
+    fprintf (st, "range; but if RX is disabled and then RY is enabled, RY is assigned the\n");
+    fprintf (st, "fixed \"first instance\" I/O address for floppy disks.\n\n");
+    fprintf (st, "Autoconfiguration cannot solve address conflicts between devices with\n");
+    fprintf (st, "overlapping fixed addresses.  For example, with default I/O page addressing,\n");
+    fprintf (st, "the PDP-11 can support either a TM11 or a TS11, but not both, since they\n");
+    fprintf (st, "use the same I/O addresses.\n\n");
+    fprintf (st, "In addition to autoconfiguration, most devices support the SET <device>\n");
+    fprintf (st, "ADDRESS command, which allows the I/O page address of the device to be\n");
+    fprintf (st, "changed, and the SET <device> VECTOR command, which allows the vector of\n");
+    fprintf (st, "the device to be changed.  Explicitly changing the I/O address or vector of\n");
+    fprintf (st, "any device to a different value DISABLES autoconfiguration for the entire\n");
+    fprintf (st, "system.  As a consequence, when autoconfiguration is disabled, the user may\n");
+    fprintf (st, "have to manually configure all remaining devices in the system that are\n");
+    fprintf (st, "explicitly enabled after autoconfiguration has been disabled.\n");
+    fprintf (st, "Autoconfiguration can be restored for the entire system with the\n");
+    fprintf (st, "SET %s AUTOCONFIGURE command.\n\n", bus->name);
+    fprintf (st, "The current I/O map can be displayed with the SHOW %s IOSPACE command.\n", bus->name);
+    fprintf (st, "Addresses that have set by autoconfiguration in floating address space are\n");
+    fprintf (st, "marked with an asterisk (*).\n\n");
+    fprintf (st, "All devices support the SHOW <device> ADDRESS and SHOW <device> VECTOR\n");
+    fprintf (st, "commands, which display the device address and vector, respectively.\n");
+    }
+fprint_brk_help (st, dptr);
 return SCPE_OK;
 }

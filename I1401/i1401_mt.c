@@ -1,6 +1,6 @@
 /* i1401_mt.c: IBM 1401 magnetic tape simulator
 
-   Copyright (c) 1993-2016, Robert M. Supnik
+   Copyright (c) 1993-2022, Robert M. Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -25,6 +25,7 @@
 
    mt           7-track magtape
 
+   26-Mar-22    RMS     Added extra case points for new MTSE definitions
    20-Oct-16    RMS     Must call sim_tape_attach to use library (Mark Pizzolato)
    03-Sep-13    RMS     Read TMK does not write GM+WM to memory
    19-Mar-11    RMS     Restored lost edit to insert EOF in memory on read EOF
@@ -158,8 +159,10 @@ REG mt_reg[] = {
     };
 
 MTAB mt_mod[] = {
-    { MTUF_WLK, 0, "write enabled", "WRITEENABLED", NULL },
-    { MTUF_WLK, MTUF_WLK, "write locked", "LOCKED", NULL }, 
+    { MTAB_XTD|MTAB_VUN, 0, "write enabled", "WRITEENABLED", 
+        &set_writelock, &show_writelock,   NULL, "Write enable tape drive" },
+    { MTAB_XTD|MTAB_VUN, 1, NULL, "LOCKED", 
+        &set_writelock, NULL,   NULL, "Write lock tape drive" },
     { MTAB_XTD|MTAB_VUN, 0, "FORMAT", "FORMAT",
       &sim_tape_set_fmt, &sim_tape_show_fmt, NULL },
     { MTAB_XTD|MTAB_VUN, 0, "CAPACITY", "CAPACITY",
@@ -416,6 +419,7 @@ switch (st) {
         break;
 
     case MTSE_FMT:                                      /* illegal fmt */
+    default:                                            /* unknown error */
         return SCPE_IERR;
 
     case MTSE_UNATT:                                    /* not attached */

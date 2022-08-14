@@ -103,6 +103,8 @@ int32 clk_inta (void);
 t_stat clk_reset (DEVICE *dptr);
 t_stat clk_set_freq (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 t_stat clk_show_freq (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+const char *clk_description (DEVICE *dptr);
+
 
 /* TTI data structures
 
@@ -142,9 +144,9 @@ MTAB tti_mod[] = {
     { MTAB_XTD|MTAB_VDV, TT_PAR_ODD,    NULL, "ODD",   &tty_set_parity, NULL, NULL, "Odd Parity" },
     { MTAB_XTD|MTAB_VDV, 0, "MODE", NULL, NULL, &sim_tt_show_modepar, NULL, "Mode and Parity" },
     { MTAB_XTD|MTAB_VDV, 0, "ADDRESS", NULL,
-      NULL, &show_addr, NULL },
+      NULL, &show_addr, NULL, "Bus address" },
     { MTAB_XTD|MTAB_VDV, 0, "VECTOR", NULL,
-      NULL, &show_vec, NULL },
+      NULL, &show_vec, NULL, "Interrupt vector" },
     { 0 }
     };
 
@@ -208,9 +210,9 @@ MTAB tto_mod[] = {
     { MTAB_XTD|MTAB_VDV, TT_PAR_ODD,    NULL, "ODD",   &tty_set_parity, NULL, NULL, "Odd Parity" },
     { MTAB_XTD|MTAB_VDV, 0, "MODE", NULL, NULL, &sim_tt_show_modepar, NULL, "Mode and Parity" },
     { MTAB_XTD|MTAB_VDV, 0, "ADDRESS", NULL,
-      NULL, &show_addr, NULL },
+      NULL, &show_addr, NULL, "Bus address" },
     { MTAB_XTD|MTAB_VDV, 0, "VECTOR", NULL,
-      NULL, &show_vec, NULL },
+      NULL, &show_vec, NULL, "Interrupt vector" },
     { 0 }
     };
 
@@ -260,15 +262,15 @@ REG clk_reg[] = {
 
 MTAB clk_mod[] = {
     { MTAB_XTD|MTAB_VDV, 50, NULL, "50HZ",
-      &clk_set_freq, NULL, NULL },
+      &clk_set_freq, NULL, NULL, "60 ticks per second" },
     { MTAB_XTD|MTAB_VDV, 60, NULL, "60HZ",
-      &clk_set_freq, NULL, NULL },
+      &clk_set_freq, NULL, NULL, "60 ticks per second" },
     { MTAB_XTD|MTAB_VDV, 0, "FREQUENCY", NULL,
-      NULL, &clk_show_freq, NULL },
+      NULL, &clk_show_freq, NULL, "Clock tick frequency" },
     { MTAB_XTD|MTAB_VDV, 0, "ADDRESS", NULL,
-      NULL, &show_addr, NULL },
+      NULL, &show_addr, NULL, "Bus address" },
     { MTAB_XTD|MTAB_VDV, 0, "VECTOR", NULL,
-      NULL, &show_vec, NULL },
+      NULL, &show_vec, NULL, "Interrupt vector" },
     { 0 }
     };
 
@@ -286,7 +288,8 @@ DEVICE clk_dev = {
     NULL, NULL, &clk_reset,
     NULL, NULL, NULL,
     &clk_dib, DEV_DEBUG | DEV_UBUS | DEV_QBUS, 0,
-    clk_debug
+    clk_debug, NULL, NULL, NULL, NULL, NULL, &clk_description
+
     };
 
 /* Terminal input address routines */
@@ -593,3 +596,9 @@ t_stat clk_show_freq (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 fprintf (st, "%dHz", clk_tps);
 return SCPE_OK;
 }
+
+const char *clk_description (DEVICE *dptr)
+{
+return "KW11-L line frequency clock";
+}
+

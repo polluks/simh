@@ -399,7 +399,7 @@ DEBTAB              nia_debug[] = {
     {"DETAIL", DEBUG_DETAIL, "Show details about device"},
     {"EXP", DEBUG_EXP, "Show exception information"},
     {"CONI", DEBUG_CONI, "Show coni instructions"},
-    {"CONO", DEBUG_CONO, "Show coni instructions"},
+    {"CONO", DEBUG_CONO, "Show cono instructions"},
     {"DATAIO", DEBUG_DATAIO, "Show datai and datao instructions"},
     {"IRQ", DEBUG_IRQ, "Show IRQ requests"},
 #define DEBUG_ARP (DEBUG_IRQ<<1)
@@ -713,9 +713,12 @@ uint8 *nia_cpy_from(t_addr addr, uint8 *data, int len)
         case 1:
                 word =  (uint64)(*data++) << 28;
                 break;
+        default:
+                word = 0;
+                break;
         }
+        M[addr++] = word;
     }
-    M[addr++] = word;
     return data;
 }
 
@@ -871,7 +874,7 @@ void nia_load_ptt()
             nia_error(EBSERR);
             return;
         }
-        sim_debug(DEBUG_DETAIL, &nia_dev, "NIA load ptt%d: %012llo %012llo\n\r",
+        sim_debug(DEBUG_DETAIL, &nia_dev, "NIA load ptt%d: %012llo %012llo\n",
               n,  word1, word2);
         if (word1 & SMASK) {
            uint16 type;
@@ -884,7 +887,7 @@ void nia_load_ptt()
         addr++;
     }
     for (i = 0; i < n; i++)
-       sim_debug(DEBUG_DETAIL, &nia_dev, "NIA load ptt%d: %04x %010o\n\r",
+       sim_debug(DEBUG_DETAIL, &nia_dev, "NIA load ptt%d: %04x %010o\n",
               n,  nia_data.ptt_proto[i], nia_data.ptt_head[i]);
     nia_data.ptt_n = n;
 }
@@ -922,7 +925,7 @@ void nia_load_mcast()
      }
      for(i = 0; i< n; i++) {
          eth_mac_fmt(&nia_data.macs[i], buffer);
-         sim_debug(DEBUG_DETAIL, &nia_dev, "NIA load mcast%d: %s\n\r",i,buffer);
+         sim_debug(DEBUG_DETAIL, &nia_dev, "NIA load mcast%d: %s\n",i,buffer);
      }
      nia_data.macs_n = n - 2;
      if (nia_recv_uptr->flags & UNIT_ATT)
@@ -1077,6 +1080,8 @@ void nia_packet_debug(struct nia_device *nia, const char *action,
         case ICMP_PROTO:
             icmp = (struct icmp *)payload;
             len = ntohs(ip->ip_len) - (ip->ip_v_hl & 0xf) * 4;
+            if (len > 1500)
+                len = 1500;
             sim_debug(DEBUG_ICMP, &nia_dev, "%s %s %d byte packet from %s to %s\n", action,
                 (icmp->type < sizeof(icmp_types)/sizeof(icmp_types[0])) ? icmp_types[icmp->type] : "", (int)len, src_ip, dst_ip);
             if (len && (nia_dev.dctrl & DEBUG_ICMP))
@@ -1200,7 +1205,6 @@ int nia_send_pkt(uint64 cmd)
  */
 t_stat nia_cmd_srv(UNIT * uptr)
 {
-    t_addr free_q = nia_data.unk_hdr;
     uint64    word1, word2;
     uint32    cmd;
     int       len, i;

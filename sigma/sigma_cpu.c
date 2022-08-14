@@ -25,6 +25,8 @@
 
    cpu          central processor
 
+   12-Jul-22    RMS     Fix incorrect decrement on breakpoint (Ken Rector)
+
    The system state for the Sigma CPU is as follows:
 
    RF[0:15][0:31]<0:31> register blocks
@@ -476,6 +478,7 @@ while (reason == 0) {                                   /* loop until stop */
         if (sim_brk_summ &&
             sim_brk_test (PC, SWMASK ('E'))) {          /* breakpoint? */
             reason = STOP_IBKPT;                        /* stop simulation */
+            sim_interval++;                             /* undo decrement */
             break;
             }
         if (PSW_QRX9 && (PC & PSW1_XA))                 /* S9 real ext && ext? */
@@ -1798,7 +1801,7 @@ if ((acc || QCPU_S567)?                                 /* virt or S5-7? */
     (EaP20 (IR, &bva, lnt) != 0))                       /* get real addr */
     return TR_NESTED;
 
-    switch (lnt) {
+switch (lnt) {
     case BY:
         if (ReadB (bva, &wd, acc) != 0)                 /* read byte */
             return TR_NESTED;
@@ -1820,7 +1823,7 @@ if ((acc || QCPU_S567)?                                 /* virt or S5-7? */
         if (rn && (WriteW (bva, wd, acc) != 0))         /* if mod, rewrite */
             return TR_NESTED;
         break;
-        }
+    }
 
 *res = wd;
 return 0;

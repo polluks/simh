@@ -5,10 +5,12 @@
 [![AppVeyor](https://ci.appveyor.com/api/projects/status/github/simh/simh)](https://ci.appveyor.com/project/simh/simh/history)
 
 ## Table of Contents:
+[WHAT'S NEW since the Open SIMH fork](#whats-new-since-the-open-simh-fork)  
 [WHAT'S NEW since simh v3.9](#whats-new-since-simh-v39)  
 . . [New Simulators](#new-simulators)  
 . . [Simulator Front Panel API](#simulator-front-panel-api)  
 . . [New Functionality](#new-functionality)  
+. . . . [DDCMP Synchronous host physical device support - framer](#ddcmp-synchronous-host-physical-device-support---framer)  
 . . . . [Remote Console Facility](#remote-console-facility)  
 . . . . [VAX/PDP11 Enhancements](#vaxpdp11-enhancements)  
 . . . . [PDP11 Specific Enhancements](#pdp11-specific-enhancements)  
@@ -43,6 +45,50 @@
 . . . . . . . . [MinGW32](#mingw32)  
 . . . . . . [VMS](#vms)  
 . . [Problem Reports](#problem-reports)  
+
+## WHAT'S NEW since the Open SIMH fork
+
+All Simulator updates on Open SIMH will be present in this repository, and any changes to the master branch code in this repository authored by anyone except Mark Pizzolato will be posted as pull requestss on the Open simh repo.
+
+### Mark Pizzolato's changes not present in the Open SIMH repo:
+
+#### Changes to SCP (the simulator framework or command execution environment)
+
+- Add descriptive messages for cases when NOPARAM status is returned.
+- Avoid excessive DO command context lines when commands produce multiple lines of output.
+- Support has been added to allow for optional per device unit tests to exist and to invoke them at simulator startup.
+- Add support for generic bit field packing and unpacking during buffer copying.
+- Display count of units when all units are disabled.
+- Support to display all SCP visible filenames via relative paths and use those in SAVEd state.
+- ZAP command can be aborted by a Control-C.
+- Display current NOAUTOSIZE status in SHOW VERSION output.
+- Extend logical name support to include optional unique names for units as well as devices.
+- Add extended register sanity checks including duplicate name detection.  Fixed simulator devices with duplicate register names.
+- Simulators with video devices that may be enabled, no longer disable the screen saver until the video display is presented.  Optionally enabling or disabling the OS screen saver by an environment variable.
+- More readable output of SHOW <dev>|<unit> with variable sized DEVICE and UNIT names.
+
+#### Changes to the PDP-11 and VAX simulators
+
+- All VAXen: Correct HELP CPU to properly describe model specific LOAD options for ROM and NVRAM.
+- Add 2.11 BSD and NetBSD file system recognizers.
+- Add memory details and behavior description to the MicroVAX 3900 HELP CPU output.
+- Unibus and Qbus autoconfiguration disabling has been relaxed somewhat.  Previously, any "SET <device> ADDRESS= (or VECTOR=)" command would automatically disable autoconfigure for the rest of the simulator session.  This behavior has been relaxed so that autoconfigure will only be disabled if the specified ADDRESS or VECTOR value is different from the value previously set by the initial autoconfigure.
+- Aggressive validation of Unibus and Qbus ADDRESS and VECTOR values prior to execution starting due to a BOOT command.
+- Fixed bug in devices that use sim_disk which deallocated a file transfer buffer on detach.
+- Metadata is implemented on all VAX and PDP11 disk devices when NOAUTOSIZE is not specified.
+- Full support for using disk containers with metadata between different system and device types where it makes sense.
+- VHD disk formats are available on all disk types (including floppy or DECtape devices).
+- Properly size RY drives which also don't have DEC144
+- Properly name RQ extended units beyond the initial default units.
+- HELP CPU shows supported breakpoint types.
+- Add device support for DL11-C/DL11-D/DL11-E/DLV11-J in addition to the original KL11/DL11-A/DL11-B/DL11-E/DL11-F support.  These new devices have different bus address ranges and can coexist with the original DL devices.  The new devices are DLCJI and DLCJO and are managed identically to the original DLI and DLO devices.
+
+### Updates to the Unibus DUP & Qbus DPV device by Trevor Warwick
+
+Support for Phase V DECnet connections on VAX Unibus and Qbus systems and the addition of support for the DPV11 for Qbus VAX systems.
+
+### Bill Beech has made significant enhancements and bug fixes to the SWTP simulators along with a new disk controller from Roberto Sancho Villa
+
 
 ## WHAT'S NEW since simh v3.9
 
@@ -82,7 +128,7 @@
 
 #### Richard Cornwell has implemented the IBM 701, IBM 704, IBM 7010/1410, IBM 7070/7074, IBM 7080/702/705/7053 and IBM 7090/7094/709/704 simulators.
 
-#### Richard Cornwell has implemented the PDP6, PDP10-KA, PDP10-KI and PDP10-KL simulators.
+#### Richard Cornwell has implemented the PDP6, PDP10-KA, PDP10-KI, PDP10-KL and PDP10-KS simulators.  With the differences merely being some device name changes, the PDP10-KS should be compatible with Bob Supnik's original PDP10 simulator.
 
 #### Dave Bryan has implemented an HP-3000 Series III simulator.
 
@@ -102,6 +148,8 @@
 
 #### IBM 650 simulator from Roberto Sancho Villa
 
+#### Jim Bevier has implemented a SEL32 simulator.
+
 ### New Host Platform support - HP-UX and AIX
 
 ### Simulator Front Panel API
@@ -109,6 +157,10 @@
 The sim_frontpanel API provides a programmatic interface to start and control any simulator without any special additions to the simulator code.
 
 ### New Functionality
+
+#### DDCMP Synchronous host physical device support - framer
+Paul Koning has implemented a USB hardware device which can interface transport DDCMP packets across a synchronous line 
+to physical host systems with native synchronous devices or other simulators using framer devices.
 
 #### Remote Console Facility
 A new capability has been added which allows a TELNET Connection to a user designated port so that some out of band commands can be entered to manipulate and/or adjust a running simulator.  The commands which enable and control this capability are SET REMOTE TELNET=port, SET REMOTE CONNECTIONS=n, SET REMOTE TIMEOUT=seconds, and SHOW REMOTE.
@@ -231,7 +283,7 @@ Host platforms which have libSDL2 available can leverage this functionality.
     RAW Disk Access (including CDROM)
     Virtual Disk Container files, including differencing disks
     File System type detection to accurately autosize disks.
-    Recognized file systems are: DEC ODS1, DEC ODS2, DEC RT11, DEC RSX11, Ultrix Partitions
+    Recognized file systems are: DEC ODS1, DEC ODS2, DEC RT11, DEC RSTS, DEC RSX11, Ultrix Partitions, ISO 9660, BSD 2.11 partitions and NetBSD partitions
 
 #### Tape Extensions
     AWS format tape support
@@ -411,6 +463,8 @@ Device simulator authors can easily schedule their device polling activities to 
     GO UNTIL breakpoint              Establish the breakpoint specified and go until it is encountered
     GO UNTIL "output-string" ...     Establish the specified "output-string" as an EXPECT and go until it is encountered.
     RUNLIMIT						 Bound simulator execution time
+    TAR                              Manipulate file archives
+    CURL                             Access URLs from the web
 
 #### Command Processing Enhancements
 
@@ -527,17 +581,13 @@ functionality.
 
 The MacPorts package manager is available to provide these external packages.  Once MacPorts is installed, these commands will install the required dependent packages:
 
-    # port install vde2
-    # port install libsdl2
-    # port install libsdl2_ttf
+    # port install vde2 libsdl2 libsdl2_ttf libpng zlib pcre
 
 OR
 
 The HomeBrew package manager can be used to provide these packages:
 
-    $ brew install vde
-    $ brew install sdl2
-    $ brew install sdl2_ttf
+    $ brew install vde sdl2 sdl2_ttf libpng zlib pcre
 
 ###### Linux - Dependencies
 
@@ -545,15 +595,11 @@ Different Linux distributions have different package management systems:
 
 Ubuntu:
 
-    # apt-get install libpcap-dev
-    # apt-get install libpcre3-dev
-    # apt-get install vde2
-    # apt-get install libsdl2
-    # apt-get install libsdl2_ttf
+    # apt-get install libpcap-dev libpcre3-dev vde2 libsdl2-dev libsdl2_ttf-dev
 
 #### Windows
 
-Compiling on windows is supported with recent versions of Microsoft Visual Studio (Standard or Express) and using GCC via the MinGW environment.  Things may also work under Cygwin, but that is not the preferred windows environment.  Not all features will be available as well as with either Visual Studio or MinGW.
+Compiling on windows is supported with recent versions of Microsoft Visual Studio (Standard or Express) and using GCC via the MinGW32 environment.  Things may also work under Cygwin, but that is not the preferred windows environment.  Not all features will be available as well as with either Visual Studio or MinGW32.
 
 ##### Required related files
 The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt
@@ -564,7 +610,7 @@ The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0Re
 
 ##### MinGW32
 
-The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt describes the required steps to use the setup your environment to build using MinGW32.
+Building with MinGW32 requires the same directory organization and the dependent package support described for Visual Studio in the file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt.  Building with MinGW64 is not supported.
 
 #### VMS
 

@@ -340,7 +340,7 @@ DEVICE va_dev = {
     2, DEV_RDX, 20, 1, DEV_RDX, 8,
     NULL, NULL, &va_reset,
     NULL, NULL, &va_detach,
-    &va_dib, DEV_DIS, 0,
+    &va_dib, DEV_DIS | DEV_DISPLAY, 0,
     NULL, NULL, NULL, &va_help, NULL, NULL,
     &va_description
     };
@@ -1297,6 +1297,7 @@ if (!vid_active)  {
     va_lines = (uint32 *) calloc (VA_XSIZE * VA_YSIZE, sizeof (uint32));
     if (va_lines == NULL) {
         free (va_buf);
+        va_buf = NULL;
         vid_close ();
         return SCPE_MEM;
         }
