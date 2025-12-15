@@ -27,9 +27,10 @@ Copyright (c) 2005-2012, William Beech
 #include <ctype.h>
 #include "sim_defs.h"                   // simulator defs
 
-/* Rename of global PC variable to avoid namespace conflicts on some platforms */
+/* Rename of global PC and SP variables to avoid namespace conflicts on some platforms */
 
 #define PC PC_Global
+#define SP SP_Global
 
 //#define DONT_USE_INTERNAL_ROM 1
 
@@ -46,8 +47,6 @@ Copyright (c) 2005-2012, William Beech
 #define DEBUG_flow      0x0001
 #define DEBUG_read      0x0002
 #define DEBUG_write     0x0004
-#define DEBUG_reg       0x0008
-#define DEBUG_asm       0x0010
 #define DEBUG_all       0xFFFF
 
 /* Simulator stop codes */

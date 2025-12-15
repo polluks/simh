@@ -145,13 +145,11 @@ static const char* m6800_desc(DEVICE *dptr) {
 }
 
 /* function prototypes */
-
 t_stat cpu_set_hist (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_hist (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 t_stat m6800_reset (DEVICE *dptr);
 t_stat m6800_ex(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw);
 t_stat m6800_dep(t_value val, t_addr addr, UNIT *uptr, int32 sw);
-
 void dump_regs(void);
 int32 fetch_byte(void);
 int32 fetch_word(void);
@@ -171,12 +169,12 @@ void condevalVs(int32 op1, int32 op2);
 void condevalHa(int32 op1, int32 op2);
 
 /* external routines */
-
 extern void CPU_BD_put_mbyte(int32 addr, int32 val);
 extern void CPU_BD_put_mword(int32 addr, int32 val);
 extern int32 CPU_BD_get_mbyte(int32 addr);
 extern int32 CPU_BD_get_mword(int32 addr);
 
+//disassembly opcode table
 static const char *opcode[] = {
 "???  ", "NOP  ", "???  ", "???  ",     //0x00
 "???  ", "???  ", "TAP  ", "TPA  ",
@@ -244,6 +242,7 @@ static const char *opcode[] = {
 "???  ", "???  ", "LDX  ", "STX  ",
 };
 
+//disassembly opcode length table
 int32 oplen[256] = {
 0,1,0,0,0,0,1,1,1,1,1,1,1,1,1,1,        //0x00
 1,1,0,0,0,0,1,1,0,1,0,1,0,0,0,0,
@@ -1981,7 +1980,7 @@ t_stat m6800_reset(DEVICE *dptr)
 
 #define HLEN    16
 
-int32 sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag)
+t_stat sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag)
 {
     int32 i, addr = 0, addr0 = 0, cnt = 0, cnt0 = 0, start = 0x10000;
     int32 addr1 = 0, end = 0, byte, chk, rtype, flag0 = 1;
@@ -2051,13 +2050,13 @@ int32 sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag)
                 chk += addr >> 8;
                 for (i=0; i<HLEN; i++) {
                     byte = CPU_BD_get_mbyte(addr + i);
-                    fprintf(fileref, "%02X", byte);	
+                    fprintf(fileref, "%02X", byte);
                     chk += byte; chk &= BYTEMASK;
                     cnt++;
                 }
                 chk = (~chk) & BYTEMASK; 
                 fprintf(fileref,"%02X\n", chk);
-	        addr += HLEN;
+                addr += HLEN;
             }
             if(addr < end) { //last record
                 fprintf(fileref, "S1%02X%04X", end - addr + 3, addr);
@@ -2067,13 +2066,13 @@ int32 sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag)
                 chk += addr >> 8;
                 for (i=0; i<=(end - addr); i++) {
                     byte = CPU_BD_get_mbyte(addr + i);
-                    fprintf(fileref, "%02X", byte);	
+                    fprintf(fileref, "%02X", byte);
                     chk += byte; chk &= BYTEMASK;
                     cnt++;
                 }
                 chk = (~chk) & BYTEMASK; 
                 fprintf(fileref, "%02X\n", chk);
-	        addr = end;
+                addr = end;
             }
             fprintf(fileref,"S9\n"); //EOF record
         } else {                        //binary
@@ -2174,8 +2173,10 @@ t_stat cpu_set_hist (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
         return SCPE_OK;
         }
     lnt = (int32) get_uint (cptr, 10, HIST_MAX, &r);
-    if ((r != SCPE_OK) || (lnt && (lnt < HIST_MIN)))
-        return SCPE_ARG;
+if (r != SCPE_OK)
+    return sim_messagef (SCPE_ARG, "Invalid Numeric Value: %s.  Maximum is %d\n", cptr, HIST_MAX);
+if (lnt && (lnt < HIST_MIN))
+    return sim_messagef (SCPE_ARG, "%d is less than the minumum history value of %d\n", lnt, HIST_MIN);
     hst_p = 0;
     if (hst_lnt) {
         free (hst);
@@ -2205,7 +2206,7 @@ t_stat cpu_show_hist (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
     if (cptr) {
         lnt = (int32) get_uint (cptr, 10, hst_lnt, &r);
         if ((r != SCPE_OK) || (lnt == 0))
-            return SCPE_ARG;
+            return sim_messagef (SCPE_ARG, "Invalid count specifier: %s, max is %d\n", cptr, hst_lnt);
         }
     else lnt = hst_lnt;
     di = hst_p - lnt;                       /* work forward */
@@ -2213,6 +2214,10 @@ t_stat cpu_show_hist (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
         di = di + hst_lnt;
     fprintf (st, "PC   SP   CC A  B  IX   Instruction\n\n");
     for (k = 0; k < lnt; k++) {             /* print specified */
+        if (stop_cpu) {                     /* Control-C (SIGINT) */
+            stop_cpu = FALSE;
+            break;                          /* abandon remaining output */
+            }
         h = &hst[(di++) % hst_lnt];         /* entry pointer */
         ir = h->inst[0];
         fprintf (st, "%04X %04X %02X ", h->pc , h->sp, h->cc);

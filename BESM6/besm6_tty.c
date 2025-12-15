@@ -28,7 +28,6 @@
  */
 
 #include "besm6_defs.h"
-#include "sim_sock.h"
 #include "sim_tmxr.h"
 
 #define TTY_MAX         24              /* Serial TTY lines */
@@ -75,7 +74,7 @@ int tty_typed [TTY_MAX+1], tty_instate [TTY_MAX+1];
 /* For all lines */
 time_t tty_last_time [LINES_MAX+1];
 int tty_idle_count [LINES_MAX+1];
-int tty_lnorder[LINES_MAX+1] = { -1 };
+int32 tty_lnorder[LINES_MAX+1] = { -1 };
 
 /* The serial interrupt generator frequency, common for all VT lines */
 int tty_rate = 300;
@@ -1252,7 +1251,7 @@ void vt_receive()
                  * <enter>HYC<enter> needs to be typed
                  * to re-initialize the line
                  */
-                TTY_IN |= mask;		/* "long start" */
+                TTY_IN |= mask;         /* "long start" */
                 break;
             }
             switch (tty_unit[num].flags & TTY_CHARSET_MASK) {

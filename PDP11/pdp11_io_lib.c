@@ -121,7 +121,7 @@ if (dibp == NULL)
 newba = (uint32) get_uint (cptr, DEV_RDX, IOPAGEBASE+IOPAGEMASK, &r); /* get new */
 if (r != SCPE_OK)
     return r;
-if ((newba <= IOPAGEBASE) ||                            /* > IO page base? */
+if ((newba < IOPAGEBASE) ||                             /* > IO page base? */
     (newba % ((uint32) val)))                           /* check modulus */
     return sim_messagef (SCPE_ARG, "Invalid bus address value: %s\n", cptr);
 if (dibp->ba != newba) {                                /* changed? */
@@ -145,7 +145,7 @@ dptr = find_dev_from_unit (uptr);
 if (dptr == NULL)
     return SCPE_IERR;
 dibp = (DIB *) dptr->ctxt;
-if ((dibp == NULL) || (dibp->ba <= IOPAGEBASE))
+if ((dibp == NULL) || (dibp->ba < IOPAGEBASE))
     return SCPE_IERR;
 if ((sim_switches & SWMASK('H')) || (sim_switch_number == 16))
     radix = 16;
@@ -698,6 +698,8 @@ AUTO_CON auto_tab[] = {/*c  #v  am vm  fxa   fxv */
         {012440}, {0224} },                             /* RH11/RH70 - fx CSR, fx VEC */
     { { "RHC" },  1,  1,  0, 0, 
         {012040}, {0204} },                             /* RH11/RH70 - fx CSR, fx VEC */
+    { { "RHD" },  1,  1,  0, 0, 
+        {016300}, {0150} },                             /* RH11/RH70 - fx CSR, fx VEC */
     { { "CLK" },         1,  1,  0, 0, 
         {017546}, {0100} },                             /* KW11L - fx CSR, fx VEC */
     { { "PCLK" },        1,  1,  0, 0, 
@@ -723,6 +725,8 @@ AUTO_CON auto_tab[] = {/*c  #v  am vm  fxa   fxv */
         {0200,     0170,   0174,   0270,   0274} },     /* LP11 - fx CSR, fx VEC */
     { { "RB" },          1,  1,  0, 0, 
         {015606}, {0250} },                             /* RB730 - fx CSR, fx VEC */
+    { { "RR" },          1,  1,  0, 0, 
+        {016700}, {0254} },                             /* RB730 - fx CSR, fx VEC */
     { { "RL" },          1,  1,  0, 0, 
         {014400}, {0160} },                             /* RL11 - fx CSR, fx VEC */
     { { "RL" },          1,  1,  0, 0, 
@@ -774,7 +778,7 @@ AUTO_CON auto_tab[] = {/*c  #v  am vm  fxa   fxv */
          016110, 016120, 016130, 016140,
          016150, 016160, 016170} },                     /* DL11-C/DL11-D/DL11-E/DLV11-J - fx CSRs */
     { { NULL },          1,  2,  8, 8 },                /* DJ11 */
-    { { NULL },          1,  2, 16, 8 },                /* DH11 */
+    { { "DH" },          1,  2, 16, 8 },                /* DH11 */
     { { "VT" },          1,  4,  0, 8,
       {012000, 012010, 012020, 012030} },               /* VT11/GT40 - fx CSRs  */
     { { "VS60" },        1,  4,  0, 8,
@@ -827,7 +831,7 @@ AUTO_CON auto_tab[] = {/*c  #v  am vm  fxa   fxv */
     { { NULL },          1,  3, 16, 8 },                /* KMS11 */
     { { NULL },          1,  2,  0, 8,
         {004200, 004240, 004300, 004340} },             /* PLC11 */
-    { { NULL },          1,  1, 16, 4 },                /* VS100 */
+    { { "UW" },          1,  1, 16, 4 },                /* VS100 */
     { { "TQ", "TQB" },   1, -1,  4, 4, 
         {014500}, {0260} },                             /* TQK50 */
     { { NULL },          1,  2, 16, 8 },                /* KMV11 */
@@ -896,6 +900,10 @@ AUTO_CON auto_tab[] = {/*c  #v  am vm  fxa   fxv */
         {04040}, {0270} },                              /* NG - vector display */
     { { "DAZ" },         1,  1,  0, 0, 
         {00104} },                                      /* DAZ */
+    { { "TV" },          1,  0,  0, 0, 
+        {04100} },                                      /* TV - raster display */
+    { { "MB" },          1,  1,  0, 0, 
+        {04000}, {0374} },                              /* MB11 */
     { { NULL },         -1 }                            /* end table */
 };
 

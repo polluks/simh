@@ -1586,8 +1586,8 @@ for ( ;; ) {
         hst_p = hst_p + 1;
         if (hst_p >= hst_lnt)
             hst_p = 0;
-        if (hst_log && (hst_p == hst_log_p))
-            cpu_show_hist_records (hst_log, FALSE, hst_log_p, hst_lnt);
+        if (hst_log && (hst_p == hst_log_p))    /* File Logging and Full, then write all records*/
+            cpu_show_hist_records (hst_log, ((hst_switches & SWMASK('O')) != 0), hst_log_p, hst_lnt);
         }
 
 /* Dispatch to instructions */
@@ -3300,6 +3300,12 @@ return 0;                                               /* set new cc's */
 
 void cpu_idle (void)
 {
+/* Normal use of sim_idle would specify FALSE (0) as the sim_interval */
+/* adjustment parameter since this simullator doesn't have a WAIT     */
+/* instruction and merely detects instruction patterns that reflect   */
+/* the system idling.  However, a TRUE (1) value for this parameter   */
+/* produces clock calibration results while idling which closer       */
+/* the actual simulator instruction execution rate.                   */
 sim_idle (TMR_CLK, TRUE);
 }
 
@@ -3527,21 +3533,22 @@ int32 i, lnt;
 char gbuf[CBUFSIZE];
 t_stat r;
 
-if (cptr == NULL) {
-    for (i = 0; i < hst_lnt; i++)
-        hst[i].iPC = 0;
-    hst_p = 0;
+if (cptr == NULL) { /* Clear History */
     if (hst_log) {
         sim_set_fsize (hst_log, (t_addr)0);
+        rewind (hst_log);
         hst_log_p = 0;
         cpu_show_hist_records (hst_log, TRUE, 0, 0);
         }
+    for (i = 0; i < hst_lnt; i++)
+        hst[i].iPC = 0;
+    hst_p = 0;
     return SCPE_OK;
     }
 cptr = get_glyph (cptr, gbuf, ':');
 lnt = (int32) get_uint (gbuf, 10, HIST_MAX, &r);
 if (r != SCPE_OK)
-    return sim_messagef (SCPE_ARG, "Invalid Numeric Value: %s\n", gbuf);
+    return sim_messagef (SCPE_ARG, "Invalid Numeric Value: %s.  Maximum is %d\n", gbuf, HIST_MAX);
 if (lnt && (lnt < HIST_MIN))
     return sim_messagef (SCPE_ARG, "%d is less than the minumum history value of %d\n", lnt, HIST_MIN);
 hst_p = 0;
@@ -3588,7 +3595,7 @@ if (hst_lnt == 0)                                       /* enabled? */
 if (cptr) {
     lnt = (int32) get_uint (cptr, 10, hst_lnt, &r);
     if ((r != SCPE_OK) || (lnt == 0))
-        return SCPE_ARG;
+        return sim_messagef (SCPE_ARG, "Invalid count specifier: %s, max is %d\n", cptr, hst_lnt);
     }
 else lnt = hst_lnt;
 di = hst_p - lnt;                                       /* work forward */
@@ -3605,11 +3612,19 @@ InstHistory *h;
 if (hst_lnt == 0)                                       /* enabled? */
     return SCPE_NOFNC;
 if (do_header) {
+    if (hst_switches & SWMASK('O')) {
+        sim_set_fsize (hst_log, (t_addr)0);
+        rewind (hst_log);
+        }
     if (hst_switches & SWMASK('T'))
         fprintf (st," TIME       ");
     fprintf (st, "PC       PSL       IR\n\n");
     }
 for (k = 0; k < count; k++) {                           /* print specified */
+    if (stop_cpu) {                                     /* Control-C (SIGINT) */
+        stop_cpu = FALSE;
+        break;                                          /* abandon remaining output */
+        }
     h = &hst[(start++) % hst_lnt];                      /* entry pointer */
     if (h->iPC == 0)                                    /* filled in? */
         continue;
@@ -3920,15 +3935,14 @@ else {
 return SCPE_OK;
 }
 
-t_stat cpu_load_bootcode (const char *filename, const unsigned char *builtin_code, size_t size, t_bool rom, t_addr offset)
+t_stat cpu_load_bootcode (const char *filename, const unsigned char *builtin_code, size_t size, t_bool rom, t_addr offset, const char *filepath, unsigned int checksum)
 {
 char args[CBUFSIZE];
 t_stat r;
 int32 saved_sim_switches = sim_switches;
 
 sim_messagef (SCPE_OK, "Loading boot code from %s%s\n", builtin_code ? "internal " : "", filename);
-if (builtin_code)
-    sim_set_memory_load_file (builtin_code, size);
+sim_set_memory_load_file_ex (builtin_code, size, filepath, checksum);
 if (rom)
     sprintf (args, "-R %s", filename);
 else
@@ -4001,16 +4015,22 @@ fprintf (st, "indicats the number of seconds which the simulator must run before
 fprintf (st, "starts.\n\n");
 fprintf (st, "The CPU can maintain a history of the most recently executed instructions.\n");
 fprintf (st, "This is controlled by the SET CPU HISTORY and SHOW CPU HISTORY commands:\n\n");
-fprintf (st, "   sim> SET CPU HISTORY                 clear history buffer\n");
-fprintf (st, "   sim> SET CPU HISTORY=0               disable history\n");
-fprintf (st, "   sim> SET CPU {-T} HISTORY=n{:file}   enable history, length = n\n");
-fprintf (st, "   sim> SHOW CPU HISTORY                print CPU history\n");
-fprintf (st, "   sim> SHOW CPU HISTORY=n              print first n entries of CPU history\n\n");
+fprintf (st, "   sim> SET CPU HISTORY                    clear history buffer\n");
+fprintf (st, "   sim> SET CPU HISTORY=0                  disable history\n");
+fprintf (st, "   sim> SET CPU {-T} {-O} HISTORY=n{:file} enable history, length = n\n");
+fprintf (st, "   sim> SHOW CPU HISTORY                   print CPU history\n");
+fprintf (st, "   sim> SHOW CPU HISTORY=n                 print most recent n entries of\n");
+fprintf (st, "                                           history\n\n");
 fprintf (st, "The -T switch causes simulator time to be recorded (and displayed)\n");
-fprintf (st, "with each history entry.\n");
+fprintf (st, "with each history entry.  This may be useful when correlating history\n");
+fprintf (st, "with debug output.\n");
 fprintf (st, "When writing history to a file (SET CPU HISTORY=n:file), 'n' specifies\n");
 fprintf (st, "the buffer flush frequency.  Warning: prodigious amounts of disk space\n");
-fprintf (st, "may be comsumed.  The maximum length for the history is %d entries.\n\n", HIST_MAX);
+fprintf (st, "may be comsumed.\n");
+fprintf (st, "Consumption of prodigious amounts of disk space can be avoided, if the\n");
+fprintf (st, "-O switch is specified which will cause each buffer flush to overwrite\n");
+fprintf (st, "any previously output history.\n");
+fprintf (st, "The maximum length for the history is %d entries.\n\n", HIST_MAX);
 fprintf (st, "Different VAX systems implemented different VAX architecture instructions\n");
 fprintf (st, "in hardware with other instructions possibly emulated by software in the\n");
 fprintf (st, "system.  The instructions that a particular simulator implements can be\n");

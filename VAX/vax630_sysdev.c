@@ -35,20 +35,13 @@
 
 #include "vax_defs.h"
 
-#ifdef DONT_USE_INTERNAL_ROM
-#if defined(VAX_620)
-#define BOOT_CODE_FILENAME "ka620.bin"
-#else
-#define BOOT_CODE_FILENAME "ka320.bin"
-#endif
-#else /* !DONT_USE_INTERNAL_ROM */
 #if defined(VAX_620)
 #include "vax_ka620_bin.h" /* Defines BOOT_CODE_FILENAME and BOOT_CODE_ARRAY, etc */
 #else
 #include "vax_ka630_bin.h" /* Defines BOOT_CODE_FILENAME and BOOT_CODE_ARRAY, etc */
 #endif
-#endif /* DONT_USE_INTERNAL_ROM */
 
+const char *boot_code_filename = BOOT_CODE_FILENAME;
 
 #define UNIT_V_NODELAY  (UNIT_V_UF + 0)                 /* ROM access equal to RAM access */
 #define UNIT_NODELAY    (1u << UNIT_V_NODELAY)
@@ -352,15 +345,21 @@ return SCPE_OK;
 t_stat rom_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr)
 {
 fprintf (st, "Read-only memory (ROM)\n\n");
-fprintf (st, "The boot ROM consists of a single unit, simulating the 64KB boot ROM.  It has\n");
+fprintf (st, "The boot ROM consists of a single unit, simulating the %uKB boot ROM.  It has\n", ROMSIZE >> 10);
 fprintf (st, "no registers.  The boot ROM is loaded with a binary byte stream using the \n");
 fprintf (st, "LOAD -r command:\n\n");
-fprintf (st, "   LOAD -r KA630.BIN      load ROM image KA630.BIN\n\n");
+fprintf (st, "   LOAD -r %s      load ROM image %s\n\n", boot_code_filename, boot_code_filename);
 fprintf (st, "When the simulator starts running (via the BOOT command), if the ROM has\n");
-fprintf (st, "not yet been loaded, an attempt will be made to automatically load the\n");
-fprintf (st, "ROM image from the file ka655x.bin in the current working directory.\n");
-fprintf (st, "If that load attempt fails, then a copy of the missing ROM file is\n");
-fprintf (st, "written to the current directory and the load attempt is retried.\n\n");
+#if !defined (DONT_USE_INTERNAL_ROM)
+    fprintf (st, "not yet been loaded, an internal 'built-in' copy of the %s image\n", boot_code_filename);
+    fprintf (st, "will be loaded into the ROM address space.\n");
+#else
+    fprintf (st, "not yet been loaded, an attempt will be made to automatically load the\n");
+    fprintf (st, "ROM image from the file %s in the current working directory.\n", boot_code_filename);
+    fprintf (st, "If that load attempt fails, then a copy of the missing ROM file is\n");
+    fprintf (st, "written to the current directory and the load attempt is retried.\n");
+#endif
+fprintf (st, "Once the ROM address space has been populated execution will be started.\n\n");
 fprintf (st, "ROM accesses a use a calibrated delay that slows ROM-based execution to\n");
 fprintf (st, "about 500K instructions per second.  This delay is required to make the\n");
 fprintf (st, "power-up self-test routines run correctly on very fast hosts.\n");
@@ -911,7 +910,7 @@ if ((ptr = get_sim_sw (ptr)) == NULL)               /* get switches */
     return SCPE_INVSW;
 get_glyph (ptr, gbuf, 0);                           /* get glyph */
 if (gbuf[0] && strcmp (gbuf, "CPU"))
-    return SCPE_ARG;                                /* Only can specify CPU device */
+    return sim_messagef (SCPE_ARG, "Invalid boot device: %s, must specify BOOT CPU or simply BOOT\n", gbuf);
 return run_cmd (flag, "CPU");
 }
 
@@ -930,7 +929,7 @@ conpsl = PSL_IS | PSL_IPL1F | CON_PWRUP;
 if (rom == NULL)
     return SCPE_IERR;
 if (*rom == 0) {                                        /* no boot? */
-    r = cpu_load_bootcode (BOOT_CODE_FILENAME, BOOT_CODE_ARRAY, BOOT_CODE_SIZE, TRUE, 0);
+    r = cpu_load_bootcode (BOOT_CODE_FILENAME, BOOT_CODE_ARRAY, BOOT_CODE_SIZE, TRUE, 0, BOOT_CODE_FILEPATH, BOOT_CODE_CHECKSUM);
     if (r != SCPE_OK)
         return r;
     }

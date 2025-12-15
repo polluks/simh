@@ -1,6 +1,6 @@
 /* pdp11_defs.h: PDP-11 simulator definitions
 
-   Copyright (c) 1993-2017, Robert M Supnik
+   Copyright (c) 1993-2022, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -26,6 +26,7 @@
    The author gratefully acknowledges the help of Max Burnet, Megan Gentry,
    and John Wilson in resolving questions about the PDP-11
 
+   25-Jul-22    RMS     Removed OPT_RH11 (Mark Pizzolato)
    10-Feb-17    RMS     Fixed RJS11 register block length (Mark Hill)
    19-Jan-17    RMS     Moved CR11 to BR6, leaving CD11 at BR4 (Mark Pizzolato)
    10-Mar-16    RMS     Added UC15 support
@@ -173,7 +174,7 @@
 #define OPT_FPP         (1u << 3)                       /* FPP */
 #define OPT_CIS         (1u << 4)                       /* CIS */
 #define OPT_MMU         (1u << 5)                       /* MMU */
-#define OPT_RH11        (1u << 6)                       /* RH11 */
+#define OPT_RSRV        (1u << 6)                       /* unused */
 #define OPT_PAR         (1u << 7)                       /* parity */
 #define OPT_UBM         (1u << 8)                       /* UBM */
 #define OPT_BVT         (1u << 9)                       /* BEVENT */
@@ -409,14 +410,17 @@ typedef struct {
 #define CSR_BUSY        (1u << CSR_V_BUSY)
 #define CSR_ERR         (1u << CSR_V_ERR)
 
-/* Trap masks, descending priority order, following J-11
-   An interrupt summary bit is kept with traps, to minimize overhead
+/* Trap masks, descending priority order. Rules:
+
+   - Aborts are mutually exclusive, no more than one per instrution.
+   - Aborts must be higher priority than traps. Because MME can be
+     either an abort or a trap, it is lower priority than NXM.
 */
 
 #define TRAP_V_RED      0                               /* red stk abort  4 */
 #define TRAP_V_ODD      1                               /* odd address    4 */
-#define TRAP_V_MME      2                               /* mem mgt      250 */
-#define TRAP_V_NXM      3                               /* nx memory      4 */
+#define TRAP_V_NXM      2                               /* nx memory      4 */
+#define TRAP_V_MME      3                               /* mem mgt      250 */
 #define TRAP_V_PAR      4                               /* parity err   114 */
 #define TRAP_V_PRV      5                               /* priv inst      4 */
 #define TRAP_V_ILL      6                               /* illegal inst  10 */
@@ -613,7 +617,7 @@ typedef struct pdp_dib DIB;
 #define INT_V_RL        2
 #define INT_V_RX        3
 #define INT_V_TM        4
-#define INT_V_RP        5
+#define INT_V_RHA       5
 #define INT_V_TS        6
 #define INT_V_HK        7
 #define INT_V_RQ        8
@@ -623,10 +627,10 @@ typedef struct pdp_dib DIB;
 #define INT_V_RY        12
 #define INT_V_XQ        13
 #define INT_V_XU        14
-#define INT_V_TU        15
+#define INT_V_RHB       15
 #define INT_V_RF        16
 #define INT_V_RC        17
-#define INT_V_RS        18
+#define INT_V_RHC       18
 #define INT_V_DMCRX     19
 #define INT_V_DMCTX     20
 #define INT_V_DUPRX     21
@@ -636,6 +640,10 @@ typedef struct pdp_dib DIB;
 #define INT_V_UCB       25
 #define INT_V_CH        26
 #define INT_V_NG        27
+#define INT_V_DHRX      28
+#define INT_V_DHTX      29
+#define INT_V_RHD       30
+#define INT_V_RR        31
 
 #define INT_V_PIR4      0                               /* BR4 */
 #define INT_V_TTI       1
@@ -679,7 +687,8 @@ typedef struct pdp_dib DIB;
 #define INT_RL          (1u << INT_V_RL)
 #define INT_RX          (1u << INT_V_RX)
 #define INT_TM          (1u << INT_V_TM)
-#define INT_RP          (1u << INT_V_RP)
+#define INT_RHA         (1u << INT_V_RHA)
+#define INT_RR          (1u << INT_V_RR)
 #define INT_TS          (1u << INT_V_TS)
 #define INT_HK          (1u << INT_V_HK)
 #define INT_RQ          (1u << INT_V_RQ)
@@ -689,10 +698,10 @@ typedef struct pdp_dib DIB;
 #define INT_RY          (1u << INT_V_RY)
 #define INT_XQ          (1u << INT_V_XQ)
 #define INT_XU          (1u << INT_V_XU)
-#define INT_TU          (1u << INT_V_TU)
+#define INT_RHB         (1u << INT_V_RHB)
 #define INT_RF          (1u << INT_V_RF)
 #define INT_RC          (1u << INT_V_RC)
-#define INT_RS          (1u << INT_V_RS)
+#define INT_RHC         (1u << INT_V_RHC)
 #define INT_DMCRX       (1u << INT_V_DMCRX)
 #define INT_DMCTX       (1u << INT_V_DMCTX)
 #define INT_KMCA        (1u << INT_V_KMCA)
@@ -727,6 +736,9 @@ typedef struct pdp_dib DIB;
 #define INT_NG          (1u << INT_V_NG)
 #define INT_DLCJI       (1u << INT_V_DLCJI)
 #define INT_DLCJO       (1u << INT_V_DLCJO)
+#define INT_DHRX        (1u << INT_V_DHRX)
+#define INT_DHTX        (1u << INT_V_DHTX)
+#define INT_RHD         (1u << INT_V_RHD)
 
 #define INT_INTERNAL7   (INT_PIR7)
 #define INT_INTERNAL6   (INT_PIR6 | INT_CLK)
@@ -737,6 +749,7 @@ typedef struct pdp_dib DIB;
 #define INT_INTERNAL1   (INT_PIR1)
 
 #define IPL_UCB         7                               /* int pri levels */
+#define IPL_MB          7
 #define IPL_CLK         6
 #define IPL_PCLK        6
 #define IPL_DTA         6
@@ -746,7 +759,8 @@ typedef struct pdp_dib DIB;
 #define IPL_RL          5
 #define IPL_RX          5
 #define IPL_TM          5
-#define IPL_RP          5
+#define IPL_RHA         5
+#define IPL_RR          5
 #define IPL_TS          5
 #define IPL_HK          5
 #define IPL_RQ          5
@@ -757,10 +771,11 @@ typedef struct pdp_dib DIB;
 #define IPL_XQ          5
 #define IPL_XU          5
 #define IPL_CH          5
-#define IPL_TU          5
+#define IPL_RHB         5
 #define IPL_RF          5
 #define IPL_RC          5
-#define IPL_RS          5
+#define IPL_RHC         5
+#define IPL_RHD         5
 #define IPL_DMCRX       5
 #define IPL_DMCTX       5
 #define IPL_KMCA        5
@@ -769,6 +784,8 @@ typedef struct pdp_dib DIB;
 #define IPL_DUPTX       5
 #define IPL_UCA         5
 #define IPL_NG          5
+#define IPL_DHRX        5
+#define IPL_DHTX        5
 #define IPL_PTR         4
 #define IPL_PTP         4
 #define IPL_TTI         4
@@ -821,7 +838,7 @@ typedef struct pdp_dib DIB;
 
 /* Massbus definitions */
 
-#define MBA_NUM         3                               /* number of MBA's */
+#define MBA_NUM         4                               /* number of MBA's */
 #define MBA_AUTO        (uint32)0xFFFFFFFF              /* Unassigned MBA */
 #define MBA_RMASK       037                             /* max 32 reg */
 #define MBE_NXD         1                               /* nx drive */

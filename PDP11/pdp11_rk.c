@@ -104,9 +104,8 @@
 #define RK_NUMTR        (RK_NUMCY * RK_NUMSF)           /* tracks/drive */
 #define RK_NUMDR        8                               /* drives/controller */
 #define RK_M_NUMDR      07
-#define RK_SIZE         (RK_NUMCY * RK_NUMSF * RK_NUMSC)
+#define RK_SIZE         (RK_NUMCY * RK_NUMSF * RK_NUMSC)/* words/drive */
 #define RK_RSRVSEC      (3 * RK_NUMSF * RK_NUMSC)       /* reserved (unused) disk area */
-                                                        /* words/drive */
 #define RK_CTLI         1                               /* controller int */
 #define RK_SCPI(x)      (2u << (x))                     /* drive int */
 #define RK_MAXFR        (1 << 16)                       /* max transfer */
@@ -286,7 +285,7 @@ BITFIELD *rk_reg_bits[] = {
     rk_ba_bits,
     rk_da_bits,
     NULL,
-    NULL,
+    NULL
     };
 
 /* Debug detail levels */
@@ -316,6 +315,7 @@ int32 last_drv = 0;                                     /* last r/w drive */
 int32 rk_stopioe = 1;                                   /* stop on error */
 int32 rk_swait = 10;                                    /* seek time */
 int32 rk_rwait = 10;                                    /* rotate time */
+static int32 not_impl = 0;                              /* placeholder for unused regs */
 
 const char *rk_regnames[] = {
     "RKDS",
@@ -325,7 +325,7 @@ const char *rk_regnames[] = {
     "RKBA",
     "RKDA",
     "unused",
-    "RKDB",
+    "RKDB"
     };
 
 int32 *rk_regs[] = {
@@ -335,6 +335,8 @@ int32 *rk_regs[] = {
     &rkwc,
     &rkba,
     &rkda,
+    &not_impl,
+    &not_impl
     };
 
 t_stat rk_rd (int32 *data, int32 PA, int32 access);
@@ -348,7 +350,6 @@ void rk_clr_done (void);
 t_stat rk_boot (int32 unitno, DEVICE *dptr);
 t_stat rk_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
 t_stat rk_attach (UNIT *uptr, CONST char *cptr);
-t_stat rk_detach (UNIT *uptr);
 const char *rk_description (DEVICE *dptr);
 
 DEBTAB rk_deb[] = {
@@ -401,9 +402,9 @@ REG rk_reg[] = {
 
 MTAB rk_mod[] = {
     { MTAB_XTD|MTAB_VUN, 0, "write enabled", "WRITEENABLED", 
-        &set_writelock, &show_writelock,   NULL, "Write enable tape drive" },
+        &set_writelock, &show_writelock,   NULL, "Write enable disk drive" },
     { MTAB_XTD|MTAB_VUN, 1, NULL, "LOCKED", 
-        &set_writelock, NULL,   NULL, "Write lock tape drive" },
+        &set_writelock, NULL,   NULL, "Write lock disk drive" },
     { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0, "FORMAT", "FORMAT={AUTO|SIMH|VHD|RAW}",
       &sim_disk_set_fmt, &sim_disk_show_fmt, NULL, "Set/Display disk format" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 010, "ADDRESS", "ADDRESS",
@@ -417,7 +418,7 @@ DEVICE rk_dev = {
     "RK", rk_unit, rk_reg, rk_mod,
     RK_NUMDR, 8, 24, 1, 8, RKWRDSZ,
     NULL, NULL, &rk_reset,
-    &rk_boot, &rk_attach, &rk_detach,
+    &rk_boot, &rk_attach, NULL,
     &rk_dib, DEV_DISABLE | DEV_UBUS | DEV_Q18 | DEV_DEBUG | RK_DIS | DEV_DISK, 0,
     rk_deb, NULL, NULL, &rk_help, NULL, NULL,
     &rk_description, NULL, &drv_tab
@@ -718,7 +719,7 @@ if (wc && (err == 0)) {                                 /* seek ok? */
         else {                                          /* normal store */
             if ((t = MAP_WRW (ma, wc << 1, rkxb))) {    /* store buf */
                 rker = rker | RKER_NXM;                 /* NXM? set flag */
-                wc = wc - t;                            /* adj wd cnt */
+                wc = wc - (t >> 1);                     /* adj wd cnt */
                 }
             }
         break;                                          /* end read */
@@ -733,16 +734,16 @@ if (wc && (err == 0)) {                                 /* seek ok? */
                 rkxb[i] = comp;
             }
         else {                                          /* normal fetch */
-            if ((t = MAP_RDW (ma, wc << 1, rkxb))) {  /* get buf */
+            if ((t = MAP_RDW (ma, wc << 1, rkxb))) {    /* get buf */
                 rker = rker | RKER_NXM;                 /* NXM? set flg */
-                wc = wc - t;                            /* adj wd cnt */
+                wc = wc - (t >> 1);                     /* adj wd cnt */
                 }
             }
         if (wc) {                                       /* any xfer? */
             awc = (wc + (RK_NUMWD - 1)) & ~(RK_NUMWD - 1); /* clr to */
             for (i = wc; i < awc; i++)                  /* end of blk */
                 rkxb[i] = 0;
-            sim_disk_data_trace (uptr, (uint8 *)rkxb, da/RK_NUMWD, awc, "sim_disk_wrsect", RKDEB_DAT & dptr->dctrl, RKDEB_OPS);
+            sim_disk_data_trace (uptr, (uint8 *)rkxb, da/RK_NUMWD, awc*sizeof(*rkxb), "sim_disk_wrsect", RKDEB_DAT & dptr->dctrl, RKDEB_OPS);
             err = sim_disk_wrsect (uptr, da/RK_NUMWD, (uint8 *)rkxb, NULL, awc/RK_NUMWD);
             }
         break;                                          /* end write */
@@ -785,6 +786,7 @@ if ((uptr->FUNC == RKCS_READ) && (rkcs & RKCS_FMT))     /* read format? */
 else da = da + wc + (RK_NUMWD - 1);                     /* count by words */
 track = (da / RK_NUMWD) / RK_NUMSC;
 sect = (da / RK_NUMWD) % RK_NUMSC;
+uptr->CYL = track / RK_NUMSF;
 rkda = (rkda & RKDA_DRIVE) | (track << RKDA_V_TRACK) | (sect << RKDA_V_SECT);
 rk_set_done (0);
 
@@ -903,12 +905,6 @@ return sim_disk_attach_ex2 (uptr, cptr, RK_NUMWD * sizeof (uint16),
                             RK_RSRVSEC);
 }
 
-t_stat rk_detach (UNIT *uptr)
-{
-sim_cancel (uptr);
-return sim_disk_detach (uptr);
-}
-
 /* Device bootstrap */
 
 #if defined (UC15) || !defined (VM_PDP11)
@@ -980,7 +976,7 @@ const char *const text =
 " the RK11-D (There's also a -E for the PDP-15.). The -C is described in\n"
 " the 1972 PDP11 Peripherals handbook. In that controller, RKDS<11>\n"
 " distinguishes an RK02 (low density, 128 words/sector) drive from an RK03\n"
-" (high density, 256 words/drive).\n"
+" (high density, 256 words/sector).\n"
 "\n"
 " By 1973, the RK11-C had been superseded by the RK11-D. The RK11-D only\n"
 " supports high density drives: the RK03 Diablo drive, and the RK05 DEC\n"

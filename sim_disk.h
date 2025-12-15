@@ -19,12 +19,12 @@
    IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-   Except as contained in this notice, the names of Robert M Supnik and 
+   Except as contained in this notice, the names of Robert M Supnik and
    Mark Pizzolato shall not be used in advertising or otherwise to promote
-   the sale, use or other dealings in this Software without prior written 
+   the sale, use or other dealings in this Software without prior written
    authorization from Robert M Supnik and Mark Pizzolato.
 
-   25-Jan-11    MP      Initial Implemementation
+   25-Jan-11    MP      Initial Implementation
 */
 
 #ifndef SIM_DISK_H_
@@ -48,12 +48,14 @@ typedef uint32          t_lba;                          /* disk logical block ad
 #define DKUF_W_ENC      2                               /* 2b of data encoding/packing */
 #define DKUF_M_ENC      ((1u << DKUF_W_ENC) - 1)
 #define DKUF_V_NOAUTOSIZE (DKUF_V_ENC + DKUF_W_ENC)     /* Don't Autosize disk option */
-#define DKUF_V_UF       (DKUF_V_NOAUTOSIZE + 1)
+#define DKUF_V_AUTOZAP  (DKUF_V_NOAUTOSIZE + 1)         /* Auto ZAP disk option */
+#define DKUF_V_UF       (DKUF_V_AUTOZAP + 1)
 #define DKUF_WLK        UNIT_WLK
 #define DKUF_FMT        (DKUF_M_FMT << DKUF_V_FMT)
 #define DKUF_ENC        (DKUF_M_ENC << DKUF_V_ENC)
 #define DKUF_WRP        (DKUF_WLK | UNIT_RO)
 #define DKUF_NOAUTOSIZE (1 << DKUF_V_NOAUTOSIZE)
+#define DKUF_AUTOZAP    (1 << DKUF_V_AUTOZAP)
 
 /* Encoding/Packing specfics */
 
@@ -77,19 +79,19 @@ typedef void (*DISK_PCALLBACK)(UNIT *unit, t_stat status);
 /* Prototypes */
 
 t_stat sim_disk_init (void);
-t_stat sim_disk_attach (UNIT *uptr, 
-                        const char *cptr, 
+t_stat sim_disk_attach (UNIT *uptr,
+                        const char *cptr,
                         size_t memory_sector_size,  /* memory footprint of sector data */
-                        size_t xfer_element_size, 
+                        size_t xfer_element_size,
                         t_bool dontchangecapac,     /* if false just change uptr->capac as needed */
                         uint32 debugbit,            /* debug bit */
                         const char *drivetype,      /* drive type */
                         uint32 pdp11_tracksize,     /* BAD144 track */
                         int completion_delay);      /* Minimum Delay for asynch I/O completion */
-t_stat sim_disk_attach_ex (UNIT *uptr, 
-                           const char *cptr, 
+t_stat sim_disk_attach_ex (UNIT *uptr,
+                           const char *cptr,
                            size_t memory_sector_size,   /* memory footprint of sector data */
-                           size_t xfer_element_size, 
+                           size_t xfer_element_size,
                            t_bool dontchangecapac,      /* if false just change uptr->capac as needed */
                            uint32 dbit,                 /* debug bit */
                            const char *dtype,           /* drive type */
@@ -97,10 +99,10 @@ t_stat sim_disk_attach_ex (UNIT *uptr,
                            int completion_delay,        /* Minimum Delay for asynch I/O completion */
                            const char **drivetypes);    /* list of drive types (from smallest to largest) */
                                                         /* to try and fit the container/file system into */
-t_stat sim_disk_attach_ex2 (UNIT *uptr, 
-                            const char *cptr, 
+t_stat sim_disk_attach_ex2 (UNIT *uptr,
+                            const char *cptr,
                             size_t memory_sector_size,  /* memory footprint of sector data */
-                            size_t xfer_element_size, 
+                            size_t xfer_element_size,
                             t_bool dontchangecapac,     /* if false just change uptr->capac as needed */
                             uint32 dbit,                /* debug bit */
                             const char *dtype,          /* drive type */
@@ -140,8 +142,8 @@ t_bool sim_disk_vhd_support (void);
 t_bool sim_disk_raw_support (void);
 void sim_disk_data_trace (UNIT *uptr, const uint8 *data, size_t lba, size_t len, const char* txt, int detail, uint32 reason);
 t_stat sim_disk_info_cmd (int32 flag, CONST char *ptr);
-t_stat sim_disk_set_noautosize (int32 flag, CONST char *cptr);
-t_bool sim_disk_autosize_disabled (void);
+t_stat sim_disk_set_all_noautosize (int32 flag, CONST char *cptr);
+t_stat sim_disk_set_all_autozap (int32 flag, CONST char *cptr);
 t_stat sim_disk_set_drive_type (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 t_stat sim_disk_set_drive_type_by_name (UNIT *uptr, const char *drive_type);
 t_stat sim_disk_show_drive_type (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
@@ -162,29 +164,51 @@ struct DRVTYP {
     uint32      model;          /* model */
     const char  *name_alias;    /* Alias device type name */
     const char  *name_desc;     /* Descriptive Text for device type */
-    uint32      tpg;            /* trk/grp */
-    uint32      gpc;            /* grp/cyl */
-    uint32      xbn;            /* XBN size */
-    uint32      dbn;            /* DBN size */
-    uint32      rcts;           /* RCT size */
-    uint32      rctc;           /* RCT copies */
-    uint32      rbn;            /* RBNs */
-    uint32      cylp;           /* first cyl for write precomp */
-    uint32      cylr;           /* first cyl for reduced write current */
-    uint32      ccs;            /* cyl/cyl skew */
-    uint32      devtype;        /* SCSI Device Type */
-    uint32      pqual;          /* SCSI pqual */
-    uint32      scsiver;        /* SCSI scsi version */
-    const char *manufacturer;   /* SCSI manufacturer string */
-    const char *product;        /* SCSI product string */
-    const char *rev;            /* SCSI revision string */
-    uint32      gaplen;         /* SCSI tape gap length */
+    uint32      uint32_01;      /* #1 device specific parameter */
+    uint32      uint32_02;      /* #2 device specific parameter */
+    uint32      uint32_03;      /* #3 device specific parameter */
+    uint32      uint32_04;      /* #4 device specific parameter */
+    uint32      uint32_05;      /* #5 device specific parameter */
+    uint32      uint32_06;      /* #6 device specific parameter */
+    uint32      uint32_07;      /* #7 device specific parameter */
+    uint32      uint32_08;      /* #8 device specific parameter */
+    uint32      uint32_09;      /* #9 device specific parameter */
+    uint32      uint32_10;      /* #10 device specific parameter */
+    uint32      uint32_11;      /* #11 device specific parameter */
+    uint32      uint32_12;      /* #12 device specific parameter */
+    uint32      uint32_13;      /* #13 device specific parameter */
+    const char *str_01;         /* #1 device specific string */
+    const char *str_02;         /* #2 device specific string  */
+    const char *str_03;         /* #3 device specific string */
+    uint32      uint32_14;      /* #14 device specific parameter */
     };
+/* MSCP specific drive parameters */
+#define tpg     uint32_01       /* trk/grp */
+#define gpc     uint32_02       /* grp/cyl */
+#define xbn     uint32_03       /* XBN size */
+#define dbn     uint32_04       /* DBN size */
+#define rcts    uint32_05       /* RCT size */
+#define rctc    uint32_06       /* RCT copies */
+#define rbn     uint32_07       /* RBNs */
+#define cylp    uint32_08       /* first cyl for write precomp */
+#define cylr    uint32_09       /* first cyl for reduced write current */
+#define ccs     uint32_10       /* cyl/cyl skew */
+/* SCSI specific drive parameters */
+#define devtype uint32_11       /* SCSI Device Type */
+#define pqual   uint32_12       /* SCSI pqual */
+#define scsiver uint32_13       /* SCSI scsi version */
+#define manufacturer str_01     /* SCSI manufacturer string */
+#define product      str_02     /* SCSI product string */
+#define rev          str_03     /* SCSI revision string */
+#define gaplen  uint32_14       /* SCSI tape gap length */
+
+
+
 
 /* Contents/Values in DRVTYP.flags field */
 
 #define DRVFL_V_TYPE    0                       /* Interface Type */
-#define DRVFL_W_TYPE    5       
+#define DRVFL_W_TYPE    5
 #define DRVFL_M_TYPE    ((1u << DRVFL_W_TYPE) - 1)
 #define DRVFL_TYPE_MFM  (0 << DRVFL_V_TYPE)
 #define DRVFL_TYPE_SDI  (1 << DRVFL_V_TYPE)
@@ -205,14 +229,19 @@ struct DRVTYP {
 #define DRVFL_SETSIZE   (1u << DRVFL_V_SETSIZE) /* Settable Drive Size/Capacity */
 #define DRVFL_V_NOCHNG  (DRVFL_V_SETSIZE + 1)
 #define DRVFL_NOCHNG    (1u << DRVFL_V_NOCHNG)  /* Can't change drive type once set */
-#define DRVFL_V_NORMV   (DRVFL_V_NOCHNG + 1)
+#define DRVFL_V_DETAUTO (DRVFL_V_NOCHNG + 1)
+#define DRVFL_DETAUTO   (1u << DRVFL_V_DETAUTO) /* Don't Autosize attach, write metadata on detach*/
+#define DRVFL_V_NORMV   (DRVFL_V_DETAUTO + 1)
 #define DRVFL_NORMV     (1u << DRVFL_V_NORMV)   /* Can't change to a removable drive */
+#define DRVFL_V_QICTAPE (DRVFL_V_NORMV + 1)
+#define DRVFL_QICTAPE   (1u << DRVFL_V_QICTAPE) /* drive is a QIC (Quarter Inch Cartridge) tape */
 
 /* DRVTYP Initializer for SCSI disk and/or tape */
-#define DRV_SCSI(typ, pq, ver, rmv, bsz, lbn, man, prd, rev, nm, gap, txt) \
-    46, 9, 1549, lbn, nm, bsz, (rmv == TRUE) ? DRVFL_RMV : 0,              \
-    NULL, 0, 0, NULL, txt,                                                 \
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,                                          \
+#define DRV_SCSI(typ, pq, ver, rmv, bsz, sect, surf, cyl, lbn, man, prd, rev, nm, gap, txt) \
+    sect, surf, cyl, lbn, nm, bsz,                                                          \
+    DRVFL_TYPE_SCSI | ((rmv == TRUE) ? DRVFL_RMV|DRVFL_QICTAPE : 0),                        \
+    NULL, 0, 0, NULL, txt,                                                                  \
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,                                                           \
     typ, pq, ver, man, prd, rev, gap
 
 #define DRV_MINC       512                             /* min cap LBNs */

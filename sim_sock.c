@@ -63,7 +63,7 @@ extern "C" {
 #define WSAAPI
 #endif
 
-#if defined(SHUT_RDWR) && !defined(SD_BOTH)
+#if !defined(SD_BOTH)
 #define SD_BOTH SHUT_RDWR
 #endif
 
@@ -83,49 +83,6 @@ extern "C" {
    sim_setnonblock      set socket non-blocking
 */
 
-/* First, all the non-implemented versions */
-
-#if defined (__OS2__) && !defined (__EMX__)
-
-void sim_init_sock (void)
-{
-}
-
-void sim_cleanup_sock (void)
-{
-}
-
-SOCKET sim_master_sock_ex (const char *hostport, int *parse_status, int opt_flags)
-{
-return INVALID_SOCKET;
-}
-
-SOCKET sim_connect_sock_ex (const char *sourcehostport, const char *hostport, const char *default_host, const char *default_port, int opt_flags)
-{
-return INVALID_SOCKET;
-}
-
-SOCKET sim_accept_conn (SOCKET master, char **connectaddr);
-{
-return INVALID_SOCKET;
-}
-
-int sim_read_sock (SOCKET sock, char *buf, int nbytes)
-{
-return -1;
-}
-
-int sim_write_sock (SOCKET sock, char *msg, int nbytes)
-{
-return 0;
-}
-
-void sim_close_sock (SOCKET sock)
-{
-return;
-}
-
-#else                                                   /* endif unimpl */
 
 /* UNIX, Win32, Macintosh, VMS, OS2 (Berkeley socket) routines */
 
@@ -721,7 +678,7 @@ if (c != NULL) {
     if ((c - validate_addr) > sizeof (v_cpy) - 1)
         return status;
     memcpy (v_cpy, validate_addr, c - validate_addr);   /* Copy everything before the / */
-    v_cpy[1 + c - validate_addr] = '\0';                /* NUL terminate the result */
+    v_cpy[c - validate_addr] = '\0';                    /* NUL terminate the result */
     validate_addr = v_cpy;                              /* Use the original string minus the prefix specifier */
     }
 if (p_getaddrinfo(validate_addr, NULL, NULL, &ai_validate))
@@ -1088,7 +1045,7 @@ if (!(opt_flags & SIM_SOCK_OPT_BLOCKING)) {
     if (sta == SOCKET_ERROR)                            /* fcntl error? */
         return sim_err_sock (newsock, "setnonblock");
     }
-sta = listen (newsock, 1);                              /* listen on socket */
+sta = listen (newsock, SIM_SOCK_OPT_BACKLOG(opt_flags));/* listen on socket */
 if (sta == SOCKET_ERROR)                                /* listen error? */
     return sim_err_sock (newsock, "listen");
 return newsock;                                         /* got it! */
@@ -1372,8 +1329,10 @@ int sim_read_sock (SOCKET sock, char *buf, int nbytes)
 int rbytes, err;
 
 rbytes = recv (sock, buf, nbytes, 0);
-if (rbytes == 0)                                        /* disconnect */
+if (rbytes == 0) {                                       /* disconnect */
+    err = WSAGetLastError ();
     return -1;
+    }
 if (rbytes == SOCKET_ERROR) {
     err = WSAGetLastError ();
     if (err == WSAEWOULDBLOCK)                          /* no data */
@@ -1415,8 +1374,6 @@ void sim_close_sock (SOCKET sock)
 shutdown(sock, SD_BOTH);
 closesocket (sock);
 }
-
-#endif                                                  /* end else !implemented */
 
 #ifdef  __cplusplus
 }

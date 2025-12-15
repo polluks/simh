@@ -1,6 +1,6 @@
 /* pdp11_dz.c: DZ11 terminal multiplexor simulator
 
-   Copyright (c) 2001-2008, Robert M Supnik
+   Copyright (c) 2001-2023, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -25,6 +25,7 @@
 
    dz           DZ11 terminal multiplexor
 
+   23-Feb-23    RMS     Fixed line number calculation in connect (Walter Mueller)
    29-Dec-08    RMS     Added MTAB_NC to SET LOG command (Walter Mueller)
    19-Nov-08    RMS     Revised for common TMXR show routines
    18-Jun-07    RMS     Added UNIT_IDLE flag
@@ -72,7 +73,6 @@
 #define DZ_8B_DFLT      TT_MODE_8B
 #endif
 
-#include "sim_sock.h"
 #include "sim_tmxr.h"
 
 #if !defined (DZ_MUXES)
@@ -840,8 +840,8 @@ for (dz = 0; dz < dz_desc.lines/DZ_LINES; dz++) {
     for (muxln = 0; muxln < DZ_LINES; muxln++) {
         TMLN *lp = &dz_ldsc[(dz * DZ_LINES) + muxln];
 
-		if (lp->serconfig)
-            tmxr_set_config_line (lp, lp->serconfig);	/* make settings consistent */
+        if (lp->serconfig)
+            tmxr_set_config_line (lp, lp->serconfig);   /* make settings consistent */
         }
     if (!dz_mctl || (0 == (dz_csr[dz] & CSR_MSE)))      /* enabled? */
         continue;
@@ -869,10 +869,10 @@ for (dz = 0; dz < dz_desc.lines/DZ_LINES; dz++) {
     for (muxln = 0; muxln < DZ_LINES; muxln++) {
         TMLN *lp = &dz_ldsc[(dz * DZ_LINES) + muxln];
 
-		free (lp->serconfig);
-		lp->serconfig = NULL;
+        free (lp->serconfig);
+        lp->serconfig = NULL;
         }
-	}
+    }
 return r;
 }
 

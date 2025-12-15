@@ -180,10 +180,10 @@ typedef struct {
 /* storage for the rest of the registers */
 uint32 PSW = 0;                         /* program status word */
 uint32 A = 0;                           /* accumulator */
-uint32 BC = 0;                          /* BC register pair */
+static uint32 BC = 0;                   /* BC register pair */
 uint32 DE = 0;                          /* DE register pair */
 uint32 HL = 0;                          /* HL register pair */
-uint32 SP = 0;                          /* Stack pointer */
+static uint32 SP = 0;                   /* Stack pointer */
 uint32 saved_PC = 0;                    /* program counter */
 uint32 IM = 0;                          /* Interrupt Mask Register */
 uint8  xack = 0;                        /* XACK signal */
@@ -191,7 +191,7 @@ uint32 int_req = 0;                     /* Interrupt request */
 uint8 INTA = 0;                         // interrupt acknowledge
 uint16 PCX;                             /* External view of PC */
 uint16 PCY;                             /* Internal view of PC */
-uint16 PC;
+static uint16 PC;
 UNIT *uptr;
 uint16 port;                            //port used in any IN/OUT
 uint16 addr;                            //addr used for operand fetch
@@ -1363,12 +1363,12 @@ int32 sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag)
                 chk -= addr >> 8;
                 for (i=0; i<HLEN; i++) {
                     byte = get_mbyte(addr + i);
-                    fprintf(fileref, "%02X", byte & BYTEMASK);	
+                    fprintf(fileref, "%02X", byte & BYTEMASK);
                     chk -= byte; chk &= BYTEMASK;
                     cnt++;
                 }
                 fprintf(fileref,"%02X\n", chk & BYTEMASK);
-	        addr += HLEN;
+                addr += HLEN;
             }
             if(addr < end) { //last record
                 fprintf(fileref, ":%02X%04X00", end - addr, addr);
@@ -1378,12 +1378,12 @@ int32 sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag)
                 chk -= addr >> 8;
                 for (i=0; i<=(end - addr); i++) {
                     byte = get_mbyte(addr + i);
-                    fprintf(fileref, "%02X", byte & BYTEMASK);	
+                    fprintf(fileref, "%02X", byte & BYTEMASK);
                     chk -= byte; chk &= BYTEMASK;
                     cnt++;
                 }
                 fprintf(fileref, "%02X\n", chk);
-	        addr = end;
+                addr = end;
             }
             fprintf(fileref,":00000001FF\n"); //EOF record
         } else {                        //binary
@@ -1555,8 +1555,10 @@ t_stat cpu_set_hist(UNIT *uptr, int32 val, CONST char *cptr, void *desc)
         return SCPE_OK;
         }
     lnt = (int32) get_uint (cptr, 10, HIST_MAX, &r);
-    if ((r != SCPE_OK) || (lnt && (lnt < HIST_MIN)))
-        return SCPE_ARG;
+    if (r != SCPE_OK)
+        return sim_messagef (SCPE_ARG, "Invalid Numeric Value: %s.  Maximum is %d\n", cptr, HIST_MAX);
+    if (lnt && (lnt < HIST_MIN))
+        return sim_messagef (SCPE_ARG, "%d is less than the minumum history value of %d\n", lnt, HIST_MIN);
     hst_p = 0;
     if (hst_lnt) {
         free (hst);
@@ -1586,7 +1588,7 @@ t_stat cpu_show_hist(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
     if (cptr) {
         lnt = (int32) get_uint (cptr, 10, hst_lnt, &r);
         if ((r != SCPE_OK) || (lnt == 0))
-            return SCPE_ARG;
+            return sim_messagef (SCPE_ARG, "Invalid count specifier: %s, max is %d\n", cptr, hst_lnt);
         }
     else lnt = hst_lnt;
     di = hst_p - lnt;                       /* work forward */
@@ -1594,6 +1596,10 @@ t_stat cpu_show_hist(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
         di = di + hst_lnt;
     fprintf (st, "PC   SP   CC A  B  C  D  E  F  H  L  Instruction\n\n");
     for (k = 0; k < lnt; k++) {             /* print specified */
+        if (stop_cpu) {                     /* Control-C (SIGINT) */
+            stop_cpu = FALSE;
+            break;                          /* abandon remaining output */
+            }
         h = &hst[(di++) % hst_lnt];         /* entry pointer */
         ir = h->inst[0];
         fprintf (st, "%04X %04X %02X ", h->pc , h->sp, h->psw);

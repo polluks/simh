@@ -1,6 +1,6 @@
 /*************************************************************************
  *                                                                       *
- * Copyright (c) 2007-2022 Howard M. Harte.                              *
+ * Copyright (c) 2007-2023 Howard M. Harte.                              *
  * https://github.com/hharte                                             *
  *                                                                       *
  * Permission is hereby granted, free of charge, to any person obtaining *
@@ -16,22 +16,21 @@
  *                                                                       *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       *
  * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    *
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND                 *
- * NONINFRINGEMENT. IN NO EVENT SHALL HOWARD M. HARTE BE LIABLE FOR ANY  *
- * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  *
- * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     *
- * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                *
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-            *
+ * INFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE   *
+ * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN       *
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN     *
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE      *
+ * SOFTWARE.                                                             *
  *                                                                       *
- * Except as contained in this notice, the name of Howard M. Harte shall *
+ * Except as contained in this notice, the names of The Authors shall    *
  * not be used in advertising or otherwise to promote the sale, use or   *
  * other dealings in this Software without prior written authorization   *
- * Howard M. Harte.                                                      *
- *                                                                       *
- * SIMH Interface based on altairz80_hdsk.c, by Peter Schorn.            *
+ * from the Authors.                                                     *
  *                                                                       *
  * Module Description:                                                   *
- *     ImageDisk (IMD) Disk Image File access module for SIMH.           *
- *     see: http://www.classiccmp.org/dunfield/img/index.htm             *
+ *     ImageDisk Disk Image File access module for SIMH, definitions.    *
+ *     See: http://dunfield.classiccmp.org/img/index.htm                 *
  *     for details on the ImageDisk format and other utilities.          *
  *                                                                       *
  *************************************************************************/
@@ -56,7 +55,12 @@ DISK_INFO *diskOpenEx(FILE *fileref, uint32 isVerbose, DEVICE *device, uint32 de
 {
     DISK_INFO *myDisk = NULL;
 
-    myDisk = (DISK_INFO *)malloc(sizeof(DISK_INFO));
+    myDisk = (DISK_INFO*)calloc(1, sizeof(DISK_INFO));
+    if (myDisk == NULL) {
+        sim_printf("%s: %s(): memory allocation failure.\n", __FILE__, __FUNCTION__);
+        return NULL;
+    }
+
     myDisk->file = fileref;
     myDisk->device = device;
     myDisk->debugmask = debugmask;
@@ -151,7 +155,7 @@ static t_stat diskParse(DISK_INFO *myDisk, uint32 isVerbose)
         sim_debug(myDisk->debugmask, myDisk->device, "start of track %d at file offset %ld\n", myDisk->ntracks, ftell(myDisk->file));
 
         hdrBytes = sim_fread(&imd, 1, 5, myDisk->file);
-  
+
         if ((hdrBytes == 0) && feof(myDisk->file))
             break; /* detected end of IMD file */
 
@@ -665,7 +669,7 @@ t_stat sectWrite(DISK_INFO *myDisk,
  * does not involve changing the disk image size.)
  *
  * Any existing data on the disk image will be destroyed when Track 0, Head 0 is formatted.
- * At that time, the IMD file is truncated.  So for the trackWrite to be used to sucessfully
+ * At that time, the IMD file is truncated.  So for the trackWrite to be used to successfully
  * format a disk image, then format program must format tracks starting with Cyl 0, Head 0,
  * and proceed sequentially through all tracks/heads on the disk.
  *
@@ -766,6 +770,12 @@ t_stat trackWrite(DISK_INFO *myDisk,
      */
     dataLen = sectorLen + 1;
     sectorData = (uint8 *)malloc(dataLen);
+
+    if (sectorData == NULL) {
+        sim_printf("%s: %s(): memory allocation failure.\n", __FILE__, __FUNCTION__);
+        return SCPE_MEM;
+    }
+
     memset(sectorData, fillbyte, dataLen);
     sectorData[0] = SECT_RECORD_NORM;
 

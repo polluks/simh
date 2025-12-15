@@ -145,13 +145,6 @@ static BITFIELD tmr_iccs_bits [] = {
     ENDBITS
     };
 
-/* TU58 definitions */
-
-#define TD_NUMBLK       512                             /* blocks/tape */
-#define TD_NUMBY        512                             /* bytes/block */
-#define TD_SIZE         (TD_NUMBLK * TD_NUMBY)          /* bytes/tape */
-
-
 
 int32 tti_csr = 0;                                      /* control/status */
 uint32 tti_buftime;                                     /* time input character arrived */
@@ -389,7 +382,7 @@ DEVICE td_dev = {
     "TD", &td_unit, td_reg, td_mod,
     1, DEV_RDX, 20, 1, DEV_RDX, 8,
     NULL, NULL, &td_reset,
-    NULL, NULL, NULL,
+    NULL, &td_attach, NULL,
     NULL, DEV_DEBUG | DEV_DISK, 0, td_deb, NULL, NULL, NULL, NULL, NULL, 
     &td_description, NULL, &drv_tab
     };
@@ -730,7 +723,6 @@ tmr_nicr = val;
 t_stat tmr_svc (UNIT *uptr)
 {
 sim_debug (TMR_DB_TICK, &tmr_dev, "tmr_svc()\n");
-tmxr_poll = tmr_poll * TMXR_MULT;                   /* set mux poll */
 if (tmr_iccs & TMR_CSR_DON)                         /* done? set err */
     tmr_iccs = tmr_iccs | TMR_CSR_ERR;
 else
@@ -743,7 +735,6 @@ if (tmr_iccs & TMR_CSR_IE) {                        /* ie? set int req */
     }
 else
     tmr_int = 0;
-AIO_SET_INTERRUPT_LATENCY(tmr_poll*clk_tps);        /* set interrrupt latency */
 return SCPE_OK;
 }
 
@@ -774,14 +765,16 @@ if ((clk_unit.filebuf == NULL) ||                       /* make sure the TODR is
 todr_resync ();
 sim_activate_after (&clk_unit, 10000);
 tmr_poll = sim_rtcn_init_unit (&clk_unit, CLK_DELAY, TMR_CLK);  /* init timer */
+tmxr_poll = tmr_poll * TMXR_MULT;                   /* set mux poll */
 return SCPE_OK;
 }
 
 t_stat clk_svc (UNIT *uptr)
 {
-tmr_poll = sim_rtcn_calb (100, TMR_CLK);
-sim_activate_after (uptr, 10000);
-tmxr_poll = tmr_poll * TMXR_MULT;                       /* set mux poll */
+tmr_poll = sim_rtcn_calb (clk_tps, TMR_CLK);
+sim_activate_after (uptr, 1000000 / clk_tps);       /* 10000 usecs */
+tmxr_poll = tmr_poll * TMXR_MULT;                   /* set mux poll */
+AIO_SET_INTERRUPT_LATENCY(tmr_poll*100);            /* set interrrupt latency */
 return SCPE_OK;
 }
 
@@ -935,7 +928,7 @@ sim_rtcn_get_time(&now, TMR_CLK);                       /* get curr time */
 base.tv_sec = (time_t)toy->toy_gmtbase;
 base.tv_nsec = toy->toy_gmtbasemsec * 1000000;
 sim_timespec_diff (&val, &now, &base);                  /* val = now - base */
-sim_debug (TMR_DB_TODR, &clk_dev, "todr_rd() - TODR=0x%X - %s\n", (int32)(val.tv_sec*100 + val.tv_nsec/10000000), todr_fmt_vms_todr ((int32)(val.tv_sec*100 + val.tv_nsec/10000000)));
+sim_debug (TMR_DB_TODR, &clk_dev, "todr_rd() - TODR=0x%X - %s\n", (int32)(val.tv_sec*100 + (val.tv_nsec + 5000000)/10000000), todr_fmt_vms_todr ((int32)(val.tv_sec*100 + val.tv_nsec/10000000)));
 return (int32)(val.tv_sec*100 + (val.tv_nsec + 5000000)/10000000);  /* 100hz Clock rounded Ticks */
 }
 
